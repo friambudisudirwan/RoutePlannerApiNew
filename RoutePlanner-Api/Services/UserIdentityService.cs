@@ -14,6 +14,6 @@ public class UserIdentityService(IHttpContextAccessor httpContextAccessor)
 
     public int GetCompanyId()
     {
-        return Convert.ToInt32(_httpContextAccessor?.HttpContext?.User?.FindFirst("UserId")?.Value);
+        return Convert.ToInt32(_httpContextAccessor?.HttpContext?.User?.FindFirst("CompanyId")?.Value);
     }
 }

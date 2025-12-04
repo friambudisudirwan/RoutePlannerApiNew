@@ -43,7 +43,7 @@ builder.Services.AddScoped<GPSBConnectionFactory>();
 builder.Services.AddScoped<UserIdentityService>();
 builder.Services.AddScoped<AuthService>();
 builder.Services.AddScoped<RunService>();
-builder.Services.AddSingleton<GeofenceService>();
+// builder.Services.AddSingleton<GeofenceService>();
 
 var app = builder.Build();
 

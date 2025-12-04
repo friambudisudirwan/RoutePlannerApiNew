@@ -44,7 +44,7 @@ public class AuthService(
             var cmd = new CommandDefinition("sp_app_login", p, commandType: CommandType.StoredProcedure, cancellationToken: cancellationToken);
             await conn.ExecuteAsync(cmd);
 
-            var sql = @"SELECT * FROM conf_mst_user WITH(NOLOCK) WHERE UserID = @userid";
+            var sql = @"SELECT UserID, CompanyID FROM conf_mst_user WITH(NOLOCK) WHERE UserID = @userid";
             var cmdUser = new CommandDefinition(sql, new { userid = UserID }, commandType: CommandType.Text, cancellationToken: cancellationToken);
 
             var user_attribute = await conn.QueryFirstOrDefaultAsync<ConfMstUser>(cmdUser);

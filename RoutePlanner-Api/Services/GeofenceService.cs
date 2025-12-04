@@ -10,12 +10,12 @@ public class GeofenceService
 {
     private readonly GPSBConnectionFactory _gpsb = gpsb;
 
-    public async Task<object> GetGeofencesByCode(string[] geo_code)
-    {
-        using var conn = _gpsb.CreateConnection();
-        if (conn.State == ConnectionState.Closed) await conn.OpenAsync();
+    // public async Task<object> GetGeofencesByCode(string[] geo_code)
+    // {
+    //     using var conn = _gpsb.CreateConnection();
+    //     if (conn.State == ConnectionState.Closed) await conn.OpenAsync();
 
-        var sql = "";
-        return new { };
-    }
+    //     var sql = "";
+    //     return new { };
+    // }
 }
