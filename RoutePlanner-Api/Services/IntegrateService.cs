@@ -2,7 +2,7 @@ using System;
 
 namespace RoutePlanner_Api.Services;
 
-public class WarehouseService
+public class IntegrateService
 {
 
 }

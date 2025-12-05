@@ -3,6 +3,7 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
 using Dapper;
+using Microsoft.Data.SqlClient;
 using Microsoft.IdentityModel.Tokens;
 using RoutePlanner_Api.Data;
 using RoutePlanner_Api.Models;
@@ -16,7 +17,6 @@ public class AuthService(
     VRPConnectionFactory vrp
 )
 {
-    // private readonly JwtSettings _jwtSettings = config.GetSection("JwtSettings").Get<JwtSettings>() ?? throw new ArgumentNullException("JwtSettings is empty");
     private readonly ILogger<AuthService> _logger = logger;
     private readonly IHttpContextAccessor _httpContext = httpContext;
     private readonly dynamic _jwtConfig = config.GetSection("JwtSettings");
@@ -51,10 +51,15 @@ public class AuthService(
 
             return (true, "Authentication success", user_attribute);
         }
+        catch (SqlException ex)
+        {
+            _logger.LogWarning(ex, "Failed when authenticating user. {message}", ex.Message);
+            return (false, ex.Message, null);
+        }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed when authenticating user.");
-            return (false, ex.Message, null);
+            _logger.LogError(ex, "Failed when authenticating user. Internal server error.");
+            throw;
         }
     }
 

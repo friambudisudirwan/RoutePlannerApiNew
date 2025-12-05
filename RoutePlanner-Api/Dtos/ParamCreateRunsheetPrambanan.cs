@@ -4,7 +4,7 @@ using RoutePlanner_Api.Models;
 
 namespace RoutePlanner_Api.Dtos;
 
-public class ParamCreateRunsheetPrambanan
+public record ParamCreateRunsheetPrambanan
 {
     [JsonPropertyName("start_time")]
     public required DateTime StartTime { get; set; }

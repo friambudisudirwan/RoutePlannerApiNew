@@ -48,6 +48,7 @@ public record ParamTripPrambanan
     [JsonPropertyName("total_gross_volume")]
     public double TotalGrossVolume { get; set; }
 
+    [JsonPropertyName("no_so")]
     public string? NoSo { get; set; }
 
     [JsonPropertyName("customer_code")]
@@ -62,6 +63,7 @@ public record ParamTripPrambanan
     [JsonPropertyName("segment")]
     public string? Segment { get; set; }
 
+    public int IsValidLonLat { get; set; }
     public string? UsrUpd { get; set; }
     public DateTime? DtmUpd { get; set; }
 }

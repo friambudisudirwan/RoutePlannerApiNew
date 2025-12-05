@@ -38,8 +38,6 @@ builder.Services.AddControllers();
 builder.Services.AddHttpContextAccessor();
 
 builder.Services.AddScoped<VRPConnectionFactory>();
-builder.Services.AddScoped<GPSBConnectionFactory>();
-
 builder.Services.AddScoped<UserIdentityService>();
 builder.Services.AddScoped<AuthService>();
 builder.Services.AddScoped<RunService>();

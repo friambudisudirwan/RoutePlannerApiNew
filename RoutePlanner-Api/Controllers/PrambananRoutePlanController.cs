@@ -26,7 +26,7 @@ namespace RoutePlanner_Api.Controllers
             {
                 var list_runid = await _runService.CreatePrambananRunsheets(param, cancellationToken);
 
-                return Ok(new
+                return StatusCode((int)HttpStatusCode.Created, new
                 {
                     message = "Success",
                     data = list_runid.Select(x => new { RunID = x })
@@ -35,7 +35,31 @@ namespace RoutePlanner_Api.Controllers
             catch (InvalidOperationException ex)
             {
                 _logger.LogWarning(ex, "Unexpected error while creating prambanan runsheets");
+                return StatusCode((int)HttpStatusCode.InternalServerError, new { message = "Internal server error." });
+            }
+            catch (CreateRunsheetException ex)
+            {
+                _logger.LogError(ex, "Failed when creating prambanan runsheets. Internal server error.");
+                return StatusCode((int)HttpStatusCode.InternalServerError, new { message = "Internal server error." });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed when creating runsheets. Internal server error.");
+                return StatusCode((int)HttpStatusCode.InternalServerError, new { message = "Internal server error." });
+            }
+        }
+
+        [HttpPost("IntegrateRunsheets")]
+        public async Task<IActionResult> IntegrateRunsheets(ParamIntegrateRunsheets param, CancellationToken cancellationToken)
+        {
+            try
+            {
                 return Ok();
+            }
+            catch (InvalidOperationException ex)
+            {
+                _logger.LogWarning(ex, "Unexpected error while creating prambanan runsheets");
+                return StatusCode((int)HttpStatusCode.InternalServerError, new { message = "Internal server error." });
             }
             catch (CreateRunsheetException ex)
             {

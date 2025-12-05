@@ -1,5 +1,4 @@
 using System.Net;
-using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using RoutePlanner_Api.Models;
 using RoutePlanner_Api.Services;
@@ -40,13 +39,5 @@ namespace RoutePlanner_Api.Controllers
                 return StatusCode((int)HttpStatusCode.InternalServerError, "Internal server error.");
             }
         }
-
-        // [Authorize]
-        // [HttpGet("TestAuthenticate")]
-        // public IActionResult TestAuthenticate()
-        // {
-        //     var a = "test";
-        //     return Ok(User.FindFirst("UserId").Value);
-        // }
     }
 }
