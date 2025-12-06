@@ -18,6 +18,9 @@ public record ParamTripPrambanan
     [JsonPropertyName("address_name")]
     public string? TripName { get; set; }
 
+    [JsonPropertyName("city_name")]
+    public required string CityName { get; set; }
+    
     [JsonPropertyName("long")]
     public required string TripLong { get; set; }
 
@@ -62,6 +65,12 @@ public record ParamTripPrambanan
 
     [JsonPropertyName("segment")]
     public string? Segment { get; set; }
+
+    [JsonPropertyName("pl")]
+    public string? PL { get; set; }
+
+    [JsonPropertyName("ps")]
+    public string? PS { get; set; }
 
     public int IsValidLonLat { get; set; }
     public string? UsrUpd { get; set; }
