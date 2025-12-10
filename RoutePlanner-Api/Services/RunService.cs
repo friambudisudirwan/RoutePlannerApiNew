@@ -1,6 +1,7 @@
 using System.Data;
 using System.Data.Common;
 using System.Diagnostics;
+using System.Text;
 using Dapper;
 using Microsoft.Data.SqlClient;
 using Microsoft.Identity.Client;
@@ -23,7 +24,7 @@ public class RunService
     private readonly ILogger<RunService> _logger = logger;
     private readonly VRPConnectionFactory _vrp = vrp;
     private readonly UserIdentityService _userIdentity = userIdentity;
-    private readonly string _pathRouteService = config.GetSection("Configs")["PathRouteService"] ?? throw new ArgumentNullException("Path Route service is empty");
+    private readonly string _pathRouteServiceMiddleware = config.GetSection("Configs")["PathRouteServiceMiddleware"] ?? throw new ArgumentNullException("Path Route service is empty");
     private readonly string _vtsApiUrl = config.GetSection("Configs")["VtsApiUrl"] ?? throw new ArgumentNullException("Vts Api Url is empty");
 
     public async Task<List<string>> CreatePrambananRunsheets(ParamCreateRunsheetPrambanan param, CancellationToken cancellationToken)
@@ -83,13 +84,11 @@ public class RunService
             );
 
             // ** hit run service
-            await BeginRun
+            BeginRun
             (
                 user_id ?? "",
                 param.StartTime,
-                list_runid,
-                conn,
-                cancellationToken
+                list_runid
             );
 
             return list_runid;
@@ -211,37 +210,31 @@ public class RunService
         }
     }
 
-    private async Task BeginRun
+    private void BeginRun
     (
         string UserId,
         DateTime start_time,
-        List<string> list_runid,
-        DbConnection conn,
-        CancellationToken cancellationToken
+        List<string> list_runid
     )
     {
-        foreach (var runid in list_runid)
+        var args = list_runid.Select(x => new
         {
-            var p = new DynamicParameters();
-            p.Add("@runid", runid, DbType.String, ParameterDirection.Input);
-            p.Add("@start_Time", start_time, DbType.DateTime, ParameterDirection.Input);
+            runid = x,
+            start_time,
+            userid = UserId
+        });
 
-            var cmd = new CommandDefinition("sp_delete_car_already_routed", p, commandType: CommandType.StoredProcedure, cancellationToken: cancellationToken);
-            await conn.ExecuteAsync(cmd);
+        var jsonArgs = Convert.ToBase64String(Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(args)));
 
-            await Task.Run(() =>
-            {
-                var processInfo = new ProcessStartInfo
-                {
-                    FileName = _pathRouteService,
-                    Arguments = $"{runid}|{UserId}|0",
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                };
-                var process = Process.Start(processInfo);
-                process?.WaitForExit();
-            }, cancellationToken);
-        }
+        var processInfo = new ProcessStartInfo
+        {
+            FileName = _pathRouteServiceMiddleware,
+            Arguments = jsonArgs,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            WorkingDirectory = Path.GetDirectoryName(_pathRouteServiceMiddleware)
+        };
+        var process = Process.Start(processInfo);
     }
 
     private static async Task InsertPrambananTrips
