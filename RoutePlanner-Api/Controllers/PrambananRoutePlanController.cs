@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using RoutePlanner_Api.Dtos;
 using RoutePlanner_Api.Exceptions;
+using RoutePlanner_Api.Models;
 using RoutePlanner_Api.Services;
 
 namespace RoutePlanner_Api.Controllers

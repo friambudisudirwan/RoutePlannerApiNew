@@ -37,11 +37,19 @@ builder.Services.AddControllers();
 
 builder.Services.AddHttpContextAccessor();
 
+// broker rabbitmq
+builder.Services.AddSingleton<IBrokerService, BrokerService>();
+
 builder.Services.AddScoped<VRPConnectionFactory>();
 builder.Services.AddScoped<UserIdentityService>();
 builder.Services.AddScoped<AuthService>();
 builder.Services.AddScoped<RunService>();
 // builder.Services.AddSingleton<GeofenceService>();
+
+builder.Services.AddHostedService(provider =>
+{
+    return (BrokerService)provider.GetRequiredService<IBrokerService>();
+});
 
 var app = builder.Build();
 

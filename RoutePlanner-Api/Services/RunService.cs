@@ -1,6 +1,7 @@
 using System.Data;
 using System.Data.Common;
 using System.Diagnostics;
+using Newtonsoft.Json;
 using Dapper;
 using RoutePlanner_Api.Data;
 using RoutePlanner_Api.Dtos;
@@ -11,12 +12,15 @@ public class RunService
 (
     IConfiguration config,
     ILogger<RunService> logger,
+    IBrokerService brokerService,
     VRPConnectionFactory vrp,
     UserIdentityService userIdentity
 )
 {
     private readonly ILogger<RunService> _logger = logger;
     private readonly VRPConnectionFactory _vrp = vrp;
+    private readonly IBrokerService _brokerServie = brokerService;
+    private readonly dynamic _brokerConfig = config.GetSection("RabbitMQService");
     private readonly UserIdentityService _userIdentity = userIdentity;
     private readonly string _pathRouteService = config.GetSection("Configs")["PathRouteService"] ?? throw new ArgumentNullException("Path Route service is empty");
 
@@ -76,14 +80,17 @@ public class RunService
                 cancellationToken
             );
 
-            // ** hit run service
-            await BeginRun
+            // ** hit broker rabbitmq buat jalanin background service
+            await _brokerServie.PublishMessage
             (
-                user_id ?? "",
-                param.StartTime,
-                list_runid,
-                conn,
-                cancellationToken
+                exchange: _brokerConfig["ExchangeName"],
+                routing_key: _brokerConfig["RoutingKey"],
+                message: JsonConvert.SerializeObject(list_runid.Select(x => new
+                {
+                    runid = x,
+                    userid = user_id,
+                    start_time = param.StartTime
+                }))
             );
 
             return list_runid;
