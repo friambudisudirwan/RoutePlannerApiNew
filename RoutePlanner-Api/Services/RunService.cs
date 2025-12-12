@@ -2,9 +2,14 @@ using System.Data;
 using System.Data.Common;
 using System.Diagnostics;
 using Newtonsoft.Json;
+using System.Text;
 using Dapper;
+using Microsoft.Data.SqlClient;
+using Microsoft.Identity.Client;
+using RestSharp;
 using RoutePlanner_Api.Data;
 using RoutePlanner_Api.Dtos;
+using RoutePlanner_Api.Exceptions;
 
 namespace RoutePlanner_Api.Services;
 
@@ -22,7 +27,8 @@ public class RunService
     private readonly IBrokerService _brokerServie = brokerService;
     private readonly dynamic _brokerConfig = config.GetSection("RabbitMQService");
     private readonly UserIdentityService _userIdentity = userIdentity;
-    private readonly string _pathRouteService = config.GetSection("Configs")["PathRouteService"] ?? throw new ArgumentNullException("Path Route service is empty");
+    private readonly string _pathRouteServiceMiddleware = config.GetSection("Configs")["PathRouteServiceMiddleware"] ?? throw new ArgumentNullException("Path Route service is empty");
+    private readonly string _vtsApiUrl = config.GetSection("Configs")["VtsApiUrl"] ?? throw new ArgumentNullException("Vts Api Url is empty");
 
     public async Task<List<string>> CreatePrambananRunsheets(ParamCreateRunsheetPrambanan param, CancellationToken cancellationToken)
     {
@@ -102,6 +108,99 @@ public class RunService
         }
     }
 
+    public async Task<List<long>> IntegrateRunsheets(ParamIntegrateRunsheets param, CancellationToken cancellationToken)
+    {
+        using var conn = _vrp.CreateConnection();
+        if (conn.State == ConnectionState.Closed) await conn.OpenAsync(cancellationToken);
+        using var trx = await conn.BeginTransactionAsync(cancellationToken);
+
+        try
+        {
+            var company_id = _userIdentity.GetCompanyId();
+            var user_id = _userIdentity.GetUserId();
+            var token_h2h = await _userIdentity.GetTokenH2H(cancellationToken);
+
+            var list_do_id = new List<long>();
+
+            foreach (var run in param.data)
+            {
+                // ** cek apakah dari run dan car sudah ke-route
+                var sql = @"SELECT TOP 1 RunID FROM api_trx_route WITH(NOLOCK)
+                            WHERE runid = @runid AND carid = @carid AND UsrUpd = @user_id";
+                var cmd_check = new CommandDefinition(sql, new { runid = run.RunId, carid = run.CarId, user_id }, commandType: CommandType.Text, transaction: trx, cancellationToken: cancellationToken);
+                var validate_route = await conn.QueryFirstOrDefaultAsync<string>(cmd_check);
+
+                if (string.IsNullOrEmpty(validate_route)) throw new CreateRunsheetException("Route mobil tidak ditemukan.");
+
+                // ** cek apakah route sudah terintegrasi
+                sql = @"SELECT TOP 1 RunID FROM api_trx_route WITH(NOLOCK)
+                        WHERE runid = @runid AND carid = @carid AND UsrUpd = @user_id AND ISNULL(IsPostDO, 0) = 1";
+                var cmd_check2 = new CommandDefinition(sql, new { runid = run.RunId, carid = run.CarId, user_id }, commandType: CommandType.Text, transaction: trx, cancellationToken: cancellationToken);
+                var validate_route2 = await conn.QueryFirstOrDefaultAsync<string>(cmd_check2);
+
+                if (!string.IsNullOrEmpty(validate_route2)) throw new CreateRunsheetException("Route mobil sudah pernah diintegrasikan ke TMS EasyGo.");
+
+                // ** begin post do
+                var p = new DynamicParameters();
+                p.Add("@runid", run.RunId, DbType.String, ParameterDirection.Input);
+                p.Add("@carid", run.CarId, DbType.String, ParameterDirection.Input);
+
+                var cmd = new CommandDefinition("sp_posting_do_tms", p, commandType: CommandType.StoredProcedure, transaction: trx, cancellationToken: cancellationToken);
+                var fetch_do_post_param = await conn.QueryFirstOrDefaultAsync<string>(cmd) ?? throw new Exception("No data when preparing to integrate to TMS EasyGo. Internal server error");
+                var do_post_param = JsonConvert.DeserializeObject<ParamCreateDoByGeoCode>(fetch_do_post_param);
+
+                // ** update route to IsPostDo = 1
+                sql = @"UPDATE api_trx_route SET IsPostDO = 1
+                        WHERE RunId = @runid AND CarID = @carid";
+                var cmd3 = new CommandDefinition(sql, new { runid = run.RunId, carid = run.CarId }, commandType: CommandType.Text, transaction: trx, cancellationToken: cancellationToken);
+                var update_route_ispostdo_status = await conn.ExecuteAsync(cmd3);
+
+                // **hit vts api create do by code
+                var client = new RestClient(_vtsApiUrl);
+                var request = new RestRequest("/api/do/AddOrUpdateDOV1ByGeoCode", Method.Post);
+
+                // Header Token
+                request.AddHeader("Content-Type", "application/json");
+                request.AddHeader("Token", token_h2h);
+
+                var request_body = JsonConvert.SerializeObject(do_post_param);
+                request.AddParameter(
+                    "application/json",
+                    request_body,
+                    ParameterType.RequestBody
+                );
+
+                var response = await client.ExecuteAsync(request, cancellationToken);
+
+                if (!response.IsSuccessStatusCode) throw new Exception(response.ErrorMessage);
+
+                var responseData = JsonConvert.DeserializeObject<VtsApiResponseBase<DoIdData>>(response.Content ?? "") ?? throw new ArgumentNullException("Failed when integrating to TMS EasyGO");
+                if (responseData.ResponseCode != 1) throw new Exception(responseData.ResponseMessage);
+
+                list_do_id.Add(responseData.Data?.do_id ?? 0);
+            }
+
+            // **commit trx
+            await trx.CommitAsync(cancellationToken);
+            return list_do_id.Where(x => x > 0).ToList();
+        }
+        catch (InvalidOperationException)
+        {
+            await trx.RollbackAsync(cancellationToken);
+            throw;
+        }
+        catch (CreateRunsheetException)
+        {
+            await trx.RollbackAsync(cancellationToken);
+            throw;
+        }
+        catch (Exception)
+        {
+            await trx.RollbackAsync(cancellationToken);
+            throw;
+        }
+    }
+
     private static async Task PrerunPrambananPo
     (
         List<string> list_runid,
@@ -119,37 +218,31 @@ public class RunService
         }
     }
 
-    private async Task BeginRun
+    private void BeginRun
     (
         string UserId,
         DateTime start_time,
-        List<string> list_runid,
-        DbConnection conn,
-        CancellationToken cancellationToken
+        List<string> list_runid
     )
     {
-        foreach (var runid in list_runid)
+        var args = list_runid.Select(x => new
         {
-            var p = new DynamicParameters();
-            p.Add("@runid", runid, DbType.String, ParameterDirection.Input);
-            p.Add("@start_Time", start_time, DbType.DateTime, ParameterDirection.Input);
+            runid = x,
+            start_time,
+            userid = UserId
+        });
 
-            var cmd = new CommandDefinition("sp_delete_car_already_routed", p, commandType: CommandType.StoredProcedure, cancellationToken: cancellationToken);
-            await conn.ExecuteAsync(cmd);
+        var jsonArgs = Convert.ToBase64String(Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(args)));
 
-            await Task.Run(() =>
-            {
-                var processInfo = new ProcessStartInfo
-                {
-                    FileName = _pathRouteService,
-                    Arguments = $"{runid}|{UserId}|0",
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                };
-                var process = Process.Start(processInfo);
-                process?.WaitForExit();
-            }, cancellationToken);
-        }
+        var processInfo = new ProcessStartInfo
+        {
+            FileName = _pathRouteServiceMiddleware,
+            Arguments = jsonArgs,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            WorkingDirectory = Path.GetDirectoryName(_pathRouteServiceMiddleware)
+        };
+        var process = Process.Start(processInfo);
     }
 
     private static async Task InsertPrambananTrips
@@ -162,13 +255,13 @@ public class RunService
     )
     {
         var map_trips = trips.Select((x, i) => x with { SeqNo = i + 1, UsrUpd = UserId, DtmUpd = current_date_time });
-        var sql = @"INSERT INTO api_mst_trip (RunID, SeqNo, TripID, TripName, TripLong, TripLat,
-                                              Capacity, Balance, TrxID, Warehouse, BU, StorageType, 
-                                              NoSo, CodeCustomer, Segment, TotalQty, TotalGrossVolume,
+        var sql = @"INSERT INTO api_mst_trip (RunID, SeqNo, TripID, TripName, TripLong, TripLat, CityName,
+                                              Capacity, Balance, TrxID, Warehouse, BU, PL, PS, StorageType, 
+                                              NoSo, CodeCustomer, Segment, TotalQty, TotalGrossVolume, IsAllowRoute,
                                               IsValidLonLat, UsrUpd, DtmUpd, source_data)
-                    VALUES ('', @seqno, @tripid, @tripname, @triplong, @triplat,
-                            @capacity, @balance, @trxid, @poolid, @bu, @storagetype, 
-                            @noso, @codecustomer, @segment, @totalqty, @totalgrossvolume,
+                    VALUES ('', @seqno, @tripid, @tripname, @triplong, @triplat, @cityname,
+                            @capacity, @balance, @trxid, @poolid, @bu, @pl, @ps, @storagetype, 
+                            @noso, @codecustomer, @segment, @totalqty, @totalgrossvolume, 1,
                             @isvalidlonlat, @usrupd, @dtmupd, 'Api-Prambanan')";
 
         var cmd = new CommandDefinition(sql, map_trips, commandType: CommandType.Text, cancellationToken: cancellationToken);

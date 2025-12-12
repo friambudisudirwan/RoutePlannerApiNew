@@ -55,17 +55,27 @@ namespace RoutePlanner_Api.Controllers
         {
             try
             {
-                return Ok();
+                // ** hit post do
+                var list_do_id = await _runService.IntegrateRunsheets(param, cancellationToken);
+
+                return StatusCode((int)HttpStatusCode.Created, new
+                {
+                    message = "Runsheets berhasil diintegrasikan ke TMS EasyGO.",
+                    data = list_do_id.Select(x => new
+                    {
+                        do_id = x
+                    })
+                });
             }
             catch (InvalidOperationException ex)
             {
                 _logger.LogWarning(ex, "Unexpected error while creating prambanan runsheets");
-                return StatusCode((int)HttpStatusCode.InternalServerError, new { message = "Internal server error." });
+                return StatusCode((int)HttpStatusCode.InternalServerError, new { message = $"Internal server error. {ex.Message}" });
             }
             catch (CreateRunsheetException ex)
             {
-                _logger.LogError(ex, "Failed when creating prambanan runsheets. Internal server error.");
-                return StatusCode((int)HttpStatusCode.InternalServerError, new { message = "Internal server error." });
+                _logger.LogWarning(ex, "Failed when integrating prambanan runsheets.");
+                return StatusCode((int)HttpStatusCode.UnprocessableEntity, new { message = ex.Message });
             }
             catch (Exception ex)
             {

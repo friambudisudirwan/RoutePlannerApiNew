@@ -41,7 +41,7 @@ public class AuthService(
             p.Add("@password", Password.Trim(), DbType.String, ParameterDirection.Input);
             p.Add("@userip", client_ip.Trim(), DbType.String, ParameterDirection.Input);
 
-            var cmd = new CommandDefinition("sp_app_login", p, commandType: CommandType.StoredProcedure, cancellationToken: cancellationToken);
+            var cmd = new CommandDefinition("sp_app_login", p, commandType: CommandType.StoredProcedure, cancellationToken: cancellationToken, commandTimeout: 60 * 5);
             await conn.ExecuteAsync(cmd);
 
             var sql = @"SELECT UserID, CompanyID FROM conf_mst_user WITH(NOLOCK) WHERE UserID = @userid";
