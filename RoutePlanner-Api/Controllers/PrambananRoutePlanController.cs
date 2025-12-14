@@ -1,9 +1,9 @@
 using System.Net;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Newtonsoft.Json;
 using RoutePlanner_Api.Dtos;
 using RoutePlanner_Api.Exceptions;
-using RoutePlanner_Api.Models;
 using RoutePlanner_Api.Services;
 
 namespace RoutePlanner_Api.Controllers
@@ -14,11 +14,13 @@ namespace RoutePlanner_Api.Controllers
     public class PrambananRoutePlanController
     (
         ILogger<PrambananRoutePlanController> logger,
-        RunService runService
+        RunService runService,
+        IBrokerService brokerService
     ) : ControllerBase
     {
         private readonly ILogger<PrambananRoutePlanController> _logger = logger;
         private readonly RunService _runService = runService;
+        private readonly IBrokerService _brokerService = brokerService;
 
         [HttpPost("CreateRunsheets")]
         public async Task<IActionResult> CreateRunsheets(ParamCreateRunsheetPrambanan param, CancellationToken cancellationToken)

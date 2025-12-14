@@ -79,23 +79,24 @@ public class RunService
             );
 
             // ** pre run po
-            await PrerunPrambananPo
-            (
-                list_runid,
-                conn,
-                cancellationToken
-            );
+            // await PrerunPrambananPo
+            // (
+            //     list_runid,
+            //     conn,
+            //     cancellationToken
+            // );
 
             // ** hit broker rabbitmq buat jalanin background service
             await _brokerServie.PublishMessage
             (
                 exchange: _brokerConfig["ExchangeName"],
                 routing_key: _brokerConfig["RoutingKey"],
-                message: JsonConvert.SerializeObject(list_runid.Select(x => new
+                message: JsonConvert.SerializeObject(list_runid.GroupBy(x => x).Select(x => new
                 {
-                    runid = x,
+                    runid = x.Key,
                     userid = user_id,
-                    start_time = param.StartTime
+                    start_time = param.StartTime,
+                    company_id
                 }))
             );
 

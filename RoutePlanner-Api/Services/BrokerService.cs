@@ -35,8 +35,17 @@ public class BrokerService
         if (_channel is null)
             throw new InvalidOperationException("RabbitMQ channel is not initialized");
 
+        var props = new BasicProperties
+        {
+            ContentType = "application/json",
+            DeliveryMode = DeliveryModes.Persistent
+        };
         var body = Encoding.UTF8.GetBytes(message);
-        await _channel.BasicPublishAsync(
+
+        await _channel.BasicPublishAsync
+        (
+            basicProperties: props,
+            mandatory: true,
             exchange: exchange,
             routingKey: routing_key,
             body: body
