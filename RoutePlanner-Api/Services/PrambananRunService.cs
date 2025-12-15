@@ -11,7 +11,7 @@ using RoutePlanner_Api.Exceptions;
 
 namespace RoutePlanner_Api.Services;
 
-public class RunService
+public class PrambananRunService
 (
     IConfiguration config,
     ILogger<RunService> logger,

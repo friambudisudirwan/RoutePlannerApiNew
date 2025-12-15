@@ -43,8 +43,7 @@ builder.Services.AddSingleton<IBrokerService, BrokerService>();
 builder.Services.AddScoped<VRPConnectionFactory>();
 builder.Services.AddScoped<UserIdentityService>();
 builder.Services.AddScoped<AuthService>();
-builder.Services.AddScoped<RunService>();
-// builder.Services.AddSingleton<GeofenceService>();
+builder.Services.AddScoped<PrambananRunService>();
 
 builder.Services.AddHostedService(provider =>
 {
