@@ -1,8 +1,6 @@
 using System.Data;
 using System.Data.Common;
-using System.Diagnostics;
 using Newtonsoft.Json;
-using System.Text;
 using Dapper;
 using RestSharp;
 using RoutePlanner_Api.Data;
@@ -23,7 +21,7 @@ public class PrambananRunService
     private readonly ILogger<RunService> _logger = logger;
     private readonly VRPConnectionFactory _vrp = vrp;
     private readonly IBrokerService _brokerServie = brokerService;
-    private readonly dynamic _brokerConfig = config.GetSection("RabbitMQService");
+    private readonly dynamic _brokerConfig = config.GetSection("RabbitMQConfig");
     private readonly UserIdentityService _userIdentity = userIdentity;
     private readonly string _vtsApiUrl = config.GetSection("Configs")["VtsApiUrl"] ?? throw new ArgumentNullException("Vts Api Url is empty");
 
@@ -39,7 +37,7 @@ public class PrambananRunService
         try
         {
             // ** list valid trip
-            var map_trips = param.Data.Where(x => IsInIndonesiaValid(x.TripLat.Trim(), x.TripLong.Trim())).Select(x => x with
+            var map_trips = param.Data.Where(x => /*IsInIndonesiaValid(x.TripLat.Trim(), x.TripLong.Trim())*/ IsValidLongLat(x.TripLong) && IsValidLongLat(x.TripLat)).Select(x => x with
             {
                 TripLong = x.TripLong.Trim(),
                 TripLat = x.TripLat.Trim(),
@@ -47,7 +45,7 @@ public class PrambananRunService
             }).ToList();
 
             // ** list invalid trip
-            map_trips.AddRange(param.Data.Where(x => !IsInIndonesiaValid(x.TripLat.Trim(), x.TripLong.Trim())).Select((x, i) => x with
+            map_trips.AddRange(param.Data.Where(x => /*!IsInIndonesiaValid(x.TripLat.Trim(), x.TripLong.Trim())*/!IsValidLongLat(x.TripLong) || !IsValidLongLat(x.TripLat)).Select((x, i) => x with
             {
                 TripLong = string.Empty,
                 TripLat = string.Empty,
@@ -110,7 +108,6 @@ public class PrambananRunService
     {
         using var conn = _vrp.CreateConnection();
         if (conn.State == ConnectionState.Closed) await conn.OpenAsync(cancellationToken);
-        using var trx = await conn.BeginTransactionAsync(cancellationToken);
 
         try
         {
@@ -125,7 +122,7 @@ public class PrambananRunService
                 // ** cek apakah dari run dan car sudah ke-route
                 var sql = @"SELECT TOP 1 RunID FROM api_trx_route WITH(NOLOCK)
                             WHERE runid = @runid AND carid = @carid AND UsrUpd = @user_id";
-                var cmd_check = new CommandDefinition(sql, new { runid = run.RunId, carid = run.CarId, user_id }, commandType: CommandType.Text, transaction: trx, cancellationToken: cancellationToken);
+                var cmd_check = new CommandDefinition(sql, new { runid = run.RunId, carid = run.CarId, user_id }, commandType: CommandType.Text, cancellationToken: cancellationToken);
                 var validate_route = await conn.QueryFirstOrDefaultAsync<string>(cmd_check);
 
                 if (string.IsNullOrEmpty(validate_route)) throw new CreateRunsheetException("Route mobil tidak ditemukan.");
@@ -133,7 +130,7 @@ public class PrambananRunService
                 // ** cek apakah route sudah terintegrasi
                 sql = @"SELECT TOP 1 RunID FROM api_trx_route WITH(NOLOCK)
                         WHERE runid = @runid AND carid = @carid AND UsrUpd = @user_id AND ISNULL(IsPostDO, 0) = 1";
-                var cmd_check2 = new CommandDefinition(sql, new { runid = run.RunId, carid = run.CarId, user_id }, commandType: CommandType.Text, transaction: trx, cancellationToken: cancellationToken);
+                var cmd_check2 = new CommandDefinition(sql, new { runid = run.RunId, carid = run.CarId, user_id }, commandType: CommandType.Text, cancellationToken: cancellationToken);
                 var validate_route2 = await conn.QueryFirstOrDefaultAsync<string>(cmd_check2);
 
                 if (!string.IsNullOrEmpty(validate_route2)) throw new CreateRunsheetException("Route mobil sudah pernah diintegrasikan ke TMS EasyGo.");
@@ -143,19 +140,19 @@ public class PrambananRunService
                 p.Add("@runid", run.RunId, DbType.String, ParameterDirection.Input);
                 p.Add("@carid", run.CarId, DbType.String, ParameterDirection.Input);
 
-                var cmd = new CommandDefinition("sp_posting_do_tms", p, commandType: CommandType.StoredProcedure, transaction: trx, cancellationToken: cancellationToken);
-                var fetch_do_post_param = await conn.QueryFirstOrDefaultAsync<string>(cmd) ?? throw new Exception("No data when preparing to integrate to TMS EasyGo. Internal server error");
+                var cmd = new CommandDefinition("sp_posting_do_tms", p, commandType: CommandType.StoredProcedure, cancellationToken: cancellationToken);
+                var fetch_do_post_param = await conn.QueryFirstOrDefaultAsync<string>(cmd) ?? throw new CreateRunsheetException("No data when preparing to integrate to TMS EasyGo. Internal server error");
                 var do_post_param = JsonConvert.DeserializeObject<ParamCreateDoByGeoCode>(fetch_do_post_param);
 
                 // ** update route to IsPostDo = 1
                 sql = @"UPDATE api_trx_route SET IsPostDO = 1
                         WHERE RunId = @runid AND CarID = @carid";
-                var cmd3 = new CommandDefinition(sql, new { runid = run.RunId, carid = run.CarId }, commandType: CommandType.Text, transaction: trx, cancellationToken: cancellationToken);
+                var cmd3 = new CommandDefinition(sql, new { runid = run.RunId, carid = run.CarId }, commandType: CommandType.Text,  cancellationToken: cancellationToken);
                 var update_route_ispostdo_status = await conn.ExecuteAsync(cmd3);
 
                 // **hit vts api create do by code
                 var client = new RestClient(_vtsApiUrl);
-                var request = new RestRequest("/api/do/AddOrUpdateDOV1ByGeoCode", Method.Post);
+                var request = new RestRequest("/api/prambanan/AddOrUpdateDOV1ByGeoCode", Method.Post);
 
                 // Header Token
                 request.AddHeader("Content-Type", "application/json");
@@ -170,31 +167,27 @@ public class PrambananRunService
 
                 var response = await client.ExecuteAsync(request, cancellationToken);
 
-                if (!response.IsSuccessStatusCode) throw new Exception(response.ErrorMessage);
+                if (!response.IsSuccessStatusCode) throw new InvalidOperationException(response.ErrorMessage);
 
-                var responseData = JsonConvert.DeserializeObject<VtsApiResponseBase<DoIdData>>(response.Content ?? "") ?? throw new ArgumentNullException("Failed when integrating to TMS EasyGO");
-                if (responseData.ResponseCode != 1) throw new Exception(responseData.ResponseMessage);
+                var responseData = JsonConvert.DeserializeObject<VtsApiResponseBase<DoIdData>>(response.Content ?? "") ?? throw new InvalidOperationException("Failed when integrating to TMS EasyGO");
+                if (responseData.ResponseCode != 1) throw new InvalidOperationException(responseData.ResponseMessage);
 
                 list_do_id.Add(responseData.Data?.do_id ?? 0);
             }
 
             // **commit trx
-            await trx.CommitAsync(cancellationToken);
-            return list_do_id.Where(x => x > 0).ToList();
+            return [.. list_do_id.Where(x => x > 0)];
         }
         catch (InvalidOperationException)
         {
-            await trx.RollbackAsync(cancellationToken);
             throw;
         }
         catch (CreateRunsheetException)
         {
-            await trx.RollbackAsync(cancellationToken);
             throw;
         }
         catch (Exception)
         {
-            await trx.RollbackAsync(cancellationToken);
             throw;
         }
     }

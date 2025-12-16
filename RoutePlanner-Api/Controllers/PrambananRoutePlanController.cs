@@ -39,8 +39,8 @@ namespace RoutePlanner_Api.Controllers
             }
             catch (CreateRunsheetException ex)
             {
-                _logger.LogError(ex, "Failed when creating prambanan runsheets. Internal server error.");
-                return StatusCode((int)HttpStatusCode.InternalServerError, new { message = "Internal server error." });
+                _logger.LogError(ex, "Failed when creating prambanan runsheaaets.");
+                return StatusCode((int)HttpStatusCode.Conflict, new { message = ex.Message });
             }
             catch (Exception ex)
             {

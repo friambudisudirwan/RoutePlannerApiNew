@@ -19,9 +19,9 @@ public record ParamTripPrambanan
     public string? TripName { get; set; }
 
     [JsonPropertyName("city_name")]
-    public required string CityName { get; set; }
+    public string? CityName { get; set; }
     
-    [JsonPropertyName("long")]
+    [JsonPropertyName("lon")]
     public required string TripLong { get; set; }
 
     [JsonPropertyName("lat")]
