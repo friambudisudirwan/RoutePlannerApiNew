@@ -41,6 +41,8 @@ public record ParamTripPrambanan
 
     [JsonPropertyName("total_gross_weight")]
     public double Capacity { get; set; }
+    // [JsonPropertyName("warehouse")]
+    // public string? Warehouse { get; set; }
 
     [JsonPropertyName("balance")]
     public double Balance { get; set; }

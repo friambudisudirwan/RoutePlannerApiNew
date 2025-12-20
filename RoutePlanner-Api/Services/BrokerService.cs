@@ -22,6 +22,7 @@ public class BrokerService
         var factory = new ConnectionFactory
         {
             HostName = _brokerConfig["HostName"],
+            VirtualHost = _brokerConfig["VirtualHostName"],
             UserName = _brokerConfig["UserName"],
             Password = _brokerConfig["Password"]
         };
