@@ -147,7 +147,7 @@ public class PrambananRunService
                 // ** update route to IsPostDo = 1
                 sql = @"UPDATE api_trx_route SET IsPostDO = 1
                         WHERE RunId = @runid AND CarID = @carid";
-                var cmd3 = new CommandDefinition(sql, new { runid = run.RunId, carid = run.CarId }, commandType: CommandType.Text,  cancellationToken: cancellationToken);
+                var cmd3 = new CommandDefinition(sql, new { runid = run.RunId, carid = run.CarId }, commandType: CommandType.Text, cancellationToken: cancellationToken);
                 var update_route_ispostdo_status = await conn.ExecuteAsync(cmd3);
 
                 // **hit vts api create do by code
@@ -218,8 +218,12 @@ public class PrambananRunService
         CancellationToken cancellationToken
     )
     {
+        var sql = "DELETE FROM api_mst_trip WHERE runid = ''";
+        var cmd_delete = new CommandDefinition(sql, cancellationToken: cancellationToken);
+        await conn.ExecuteAsync(cmd_delete);
+
         var map_trips = trips.Select((x, i) => x with { SeqNo = i + 1, UsrUpd = UserId, DtmUpd = current_date_time });
-        var sql = @"INSERT INTO api_mst_trip (RunID, SeqNo, TripID, TripName, TripLong, TripLat, CityName,
+        sql = @"INSERT INTO api_mst_trip (RunID, SeqNo, TripID, TripName, TripLong, TripLat, CityName,
                                               Capacity, Balance, TrxID, Warehouse, BU, PL, PS, StorageType, 
                                               NoSo, CodeCustomer, Segment, TotalQty, TotalGrossVolume, IsAllowRoute,
                                               IsValidLonLat, UsrUpd, DtmUpd, source_data)
