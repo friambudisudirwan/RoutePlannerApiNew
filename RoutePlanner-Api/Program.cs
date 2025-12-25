@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using RoutePlanner_Api.Data;
 using RoutePlanner_Api.Services;
+using RoutePlanner_Api.Validator;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -43,6 +44,7 @@ builder.Services.AddSingleton<IBrokerService, BrokerService>();
 builder.Services.AddScoped<VRPConnectionFactory>();
 builder.Services.AddScoped<UserIdentityService>();
 builder.Services.AddScoped<AuthService>();
+builder.Services.AddSingleton<PrambananValidator>();
 builder.Services.AddScoped<PrambananRunService>();
 builder.Services.AddScoped<RunService>();
 

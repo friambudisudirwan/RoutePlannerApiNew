@@ -6,6 +6,8 @@ using RestSharp;
 using RoutePlanner_Api.Data;
 using RoutePlanner_Api.Dtos;
 using RoutePlanner_Api.Exceptions;
+using RoutePlanner_Api.Validator;
+using Microsoft.AspNetCore.Http.HttpResults;
 
 namespace RoutePlanner_Api.Services;
 
@@ -15,6 +17,7 @@ public class PrambananRunService
     ILogger<RunService> logger,
     IBrokerService brokerService,
     VRPConnectionFactory vrp,
+    PrambananValidator validator,
     UserIdentityService userIdentity
 )
 {
@@ -23,6 +26,7 @@ public class PrambananRunService
     private readonly IBrokerService _brokerServie = brokerService;
     private readonly dynamic _brokerConfig = config.GetSection("RabbitMQConfig");
     private readonly UserIdentityService _userIdentity = userIdentity;
+    private readonly PrambananValidator _validator = validator;
     private readonly string _vtsApiUrl = config.GetSection("Configs")["VtsApiUrl"] ?? throw new ArgumentNullException("Vts Api Url is empty");
 
     public async Task<List<string>> CreatePrambananRunsheets(ParamCreateRunsheetPrambanan param, CancellationToken cancellationToken)
@@ -36,28 +40,15 @@ public class PrambananRunService
 
         try
         {
-            // ** list valid trip
-            var map_trips = param.Data.Where(x => /*IsInIndonesiaValid(x.TripLat.Trim(), x.TripLong.Trim())*/ IsValidLongLat(x.TripLong) && IsValidLongLat(x.TripLat)).Select(x => x with
-            {
-                TripLong = x.TripLong.Trim(),
-                TripLat = x.TripLat.Trim(),
-                IsValidLonLat = 1
-            }).ToList();
-
-            // ** list invalid trip
-            map_trips.AddRange(param.Data.Where(x => /*!IsInIndonesiaValid(x.TripLat.Trim(), x.TripLong.Trim())*/!IsValidLongLat(x.TripLong) || !IsValidLongLat(x.TripLat)).Select((x, i) => x with
-            {
-                TripLong = string.Empty,
-                TripLat = string.Empty,
-                IsValidLonLat = 0
-            }));
+            var validate = _validator.ValidatePrambananSo(param.Data);
+            if (!validate.result) throw new PrambananSoValidationException("Bad Request", validate.list_duplicate_so, validate.list_not_valid_lon_lat);
 
             // ** insert trips
             await InsertPrambananTrips
             (
                 current_date_time,
                 user_id ?? "",
-                map_trips,
+                validate.list_so,
                 conn,
                 cancellationToken
             );
@@ -73,13 +64,10 @@ public class PrambananRunService
                 cancellationToken
             );
 
-            // ** pre run po
-            // await PrerunPrambananPo
-            // (
-            //     list_runid,
-            //     conn,
-            //     cancellationToken
-            // );
+            // ** delete apabila ada so yang nggak dapet runid (meskipun ngga mungkin)
+            var sql = "DELETE FROM api_mst_trip WHERE runid = '' AND usrupd = @user_id AND dtmupd = @current_date_time";
+            var cmd_delete = new CommandDefinition(sql, new { user_id, current_date_time }, cancellationToken: cancellationToken);
+            await conn.ExecuteAsync(cmd_delete);
 
             // ** hit broker rabbitmq buat jalanin background service
             await _brokerServie.PublishMessage
@@ -218,12 +206,12 @@ public class PrambananRunService
         CancellationToken cancellationToken
     )
     {
-        var sql = "DELETE FROM api_mst_trip WHERE runid = ''";
-        var cmd_delete = new CommandDefinition(sql, cancellationToken: cancellationToken);
-        await conn.ExecuteAsync(cmd_delete);
+        // var sql = "DELETE FROM api_mst_trip WHERE runid = ''";
+        // var cmd_delete = new CommandDefinition(sql, cancellationToken: cancellationToken);
+        // await conn.ExecuteAsync(cmd_delete);
 
         var map_trips = trips.Select((x, i) => x with { SeqNo = i + 1, UsrUpd = UserId, DtmUpd = current_date_time });
-        sql = @"INSERT INTO api_mst_trip (RunID, SeqNo, TripID, TripName, TripLong, TripLat, CityName,
+        var sql = @"INSERT INTO api_mst_trip (RunID, SeqNo, TripID, TripName, TripLong, TripLat, CityName,
                                               Capacity, Balance, TrxID, Warehouse, BU, PL, PS, StorageType, 
                                               NoSo, CodeCustomer, Segment, TotalQty, TotalGrossVolume, IsAllowRoute,
                                               IsValidLonLat, UsrUpd, DtmUpd, source_data)
@@ -232,7 +220,7 @@ public class PrambananRunService
                             @noso, @codecustomer, @segment, @totalqty, @totalgrossvolume, 1,
                             @isvalidlonlat, @usrupd, @dtmupd, 'Api-Prambanan')";
 
-        var cmd = new CommandDefinition(sql, map_trips, commandType: CommandType.Text, cancellationToken: cancellationToken);
+        var cmd = new CommandDefinition(sql, map_trips, commandType: CommandType.Text, cancellationToken: cancellationToken, commandTimeout: 60 * 15);
         await conn.ExecuteAsync(cmd);
     }
 
@@ -252,7 +240,7 @@ public class PrambananRunService
         p.Add("@dtmupd", current_date_time, DbType.DateTime, ParameterDirection.Input);
         p.Add("@start_time", start_time, DbType.DateTime, ParameterDirection.Input);
 
-        var cmd = new CommandDefinition("sp_prerun_prambanan", p, commandType: CommandType.StoredProcedure, cancellationToken: cancellationToken);
+        var cmd = new CommandDefinition("sp_prerun_prambanan", p, commandType: CommandType.StoredProcedure, cancellationToken: cancellationToken, commandTimeout: 60 * 15);
         await conn.ExecuteAsync(cmd);
 
         var sql = @"SELECT runid FROM api_mst_trip WITH(NOLOCK)

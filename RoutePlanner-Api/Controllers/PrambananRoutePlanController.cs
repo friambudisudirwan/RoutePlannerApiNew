@@ -32,6 +32,11 @@ namespace RoutePlanner_Api.Controllers
                     data = list_runid.Select(x => new { RunID = x })
                 });
             }
+            catch (PrambananSoValidationException ex)
+            {
+                _logger.LogWarning(ex, "Validation failed");
+                return StatusCode((int)HttpStatusCode.BadRequest, new { message = ex.Message, duplicate_so = ex.ListDuplicateSo, not_valid_lon_lat = ex.ListNotValidLonLat });
+            }
             catch (InvalidOperationException ex)
             {
                 _logger.LogWarning(ex, "Unexpected error while creating prambanan runsheets");
