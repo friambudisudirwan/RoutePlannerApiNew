@@ -16,6 +16,9 @@ public class PrambananValidator
         List<ParamTripPrambanan> list_so
     ) ValidatePrambananSo(List<ParamTripPrambanan> list_so)
     {
+        var list_not_valid_so = new List<NotValidLonLatSo>();
+        var list_valid_so = new List<ParamTripPrambanan>();
+
         var find_duplicate_so = list_so.GroupBy(x => new { x.TrxID, x.PL, x.PS }).Where(g => g.Count() > 1).Select(x => new NotValidDuplicateSo
         {
             so_no = x.Key.TrxID,
@@ -24,32 +27,84 @@ public class PrambananValidator
             duplicate_count = x.Count()
         }).ToList();
 
-        var find_not_valid_lon_lat = list_so.Where(x => !string.IsNullOrEmpty(x.TripLong) &&
-                                                        !string.IsNullOrEmpty(x.TripLat) &&
-                                                        !IsValidLonLatInIndonesia(x.TripLong, x.TripLat)
-                                            ).Select(x => new NotValidLonLatSo
-                                            {
-                                                so_no = x.TrxID,
-                                                address_id = x.TripId,
-                                                address_name = x.TripName,
-                                                warehouse_code = x.PoolID,
-                                                lon = x.TripLong,
-                                                lat = x.TripLat
-                                            }).ToList();
-
-        if (find_duplicate_so.Count > 0 || find_not_valid_lon_lat.Count > 0) return (false, "Bad Request", find_duplicate_so, find_not_valid_lon_lat, []);
-
-        var list_valid_so = new List<ParamTripPrambanan>();
-
-        list_valid_so.AddRange([.. list_so.Where(x => !string.IsNullOrEmpty(x.TripLong) && !string.IsNullOrEmpty(x.TripLat) && IsValidLonLatInIndonesia(x.TripLong, x.TripLat))]);
-        list_valid_so.AddRange([.. list_so.Where(x => string.IsNullOrEmpty(x.TripLong) || string.IsNullOrEmpty(x.TripLat)).Select(x => x with
+        foreach (var so in list_so)
         {
-            IsValidLonLat = 0,
-            TripLong = string.Empty,
-            TripLat = string.Empty
-        })]);
+            var lon = so.TripLong;
+            var lat = so.TripLat;
 
+            // cek apabila lon lat salahsatunya ada yang string empty, maka insert lon lat sebagai string empty (valid)
+            if (string.IsNullOrWhiteSpace(lon) || string.IsNullOrWhiteSpace(lat))
+            {
+                list_valid_so.Add(so with
+                {
+                    TripLong = string.Empty,
+                    TripLat = string.Empty,
+                    IsValidLonLat = 0
+                });
+                continue;
+            }
+
+            // cari lon lat yang ngga valid (tidak di indonesia) (not valid), apabila diswap valid, makan hasil akan valid (valid)
+            if (!TryNormalizeLonLatIndonesia(ref lon, ref lat))
+            {
+                list_not_valid_so.Add(new NotValidLonLatSo
+                {
+                    so_no = so.TrxID,
+                    address_id = so.TripId,
+                    address_name = so.TripName,
+                    warehouse_code = so.PoolID,
+                    lon = so.TripLong,
+                    lat = so.TripLat
+                });
+
+                continue;
+            }
+
+            // so yang sudah diswap by reference akan masuk ke list valid
+            list_valid_so.Add(so with
+            {
+                TripLong = lon,
+                TripLat = lat
+            });
+        }
+
+        if (find_duplicate_so.Count > 0 || list_not_valid_so.Count > 0) return (false, "Bad Request", find_duplicate_so, list_not_valid_so, []);
         return (true, "Validation Success", [], [], list_valid_so);
+    }
+
+    private static bool TryNormalizeLonLatIndonesia
+    (
+        ref string lon,
+        ref string lat
+    )
+    {
+        // kosong / whitespace → sah, tidak diapa-apakan
+        if (string.IsNullOrWhiteSpace(lon) || string.IsNullOrWhiteSpace(lat))
+            return true;
+
+        // as-is valid → aman
+        if (IsValidLonLatInIndonesia(lon, lat))
+            return true;
+
+        // coba parse
+        if (!double.TryParse(lon, NumberStyles.Float, CultureInfo.InvariantCulture, out var lonVal))
+            return false;
+
+        if (!double.TryParse(lat, NumberStyles.Float, CultureInfo.InvariantCulture, out var latVal))
+            return false;
+
+        // cek kalau ditukar jadi valid
+        var swappedLon = latVal.ToString(CultureInfo.InvariantCulture);
+        var swappedLat = lonVal.ToString(CultureInfo.InvariantCulture);
+
+        if (IsValidLonLatInIndonesia(swappedLon, swappedLat))
+        {
+            lon = swappedLon;
+            lat = swappedLat;
+            return true;
+        }
+
+        return false;
     }
 
     private static bool IsValidLonLatInIndonesia(string lon, string lat)

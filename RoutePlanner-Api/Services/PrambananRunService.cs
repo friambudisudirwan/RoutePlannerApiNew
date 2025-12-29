@@ -35,6 +35,8 @@ public class PrambananRunService
         var user_id = _userIdentity.GetUserId();
         var current_date_time = Convert.ToDateTime(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
 
+        if (param.StartTime == DateTime.MinValue) throw new PrambananSoValidationException("start_time format is not a valid date format.", [], []);
+
         using var conn = _vrp.CreateConnection();
         if (conn.State == ConnectionState.Closed) await conn.OpenAsync(cancellationToken);
 
