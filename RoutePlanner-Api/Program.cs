@@ -1,5 +1,7 @@
 using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.Extensions.Logging.Configuration;
+using Microsoft.Extensions.Logging.EventLog;
 using Microsoft.IdentityModel.Tokens;
 using RoutePlanner_Api.Data;
 using RoutePlanner_Api.Services;
@@ -9,6 +11,17 @@ var builder = WebApplication.CreateBuilder(args);
 
 var jwtConfig = builder.Configuration.GetSection("JwtSettings");
 var key = Encoding.UTF8.GetBytes(jwtConfig["SecretKey"] ?? throw new ArgumentNullException("Jwt Config is empty"));
+
+LoggerProviderOptions.RegisterProviderOptions<EventLogSettings, EventLogLoggerProvider>(builder.Services);
+// Konfigurasi logging yang lebih detail
+builder.Logging.ClearProviders();
+builder.Logging.AddConsole();
+builder.Logging.AddDebug();
+builder.Logging.AddEventLog(options =>
+{
+    options.LogName = "Application";
+    options.SourceName = "RoutePlannerApiLog";
+});
 
 // Add services to the container.
 builder.Services.AddAuthentication(options =>

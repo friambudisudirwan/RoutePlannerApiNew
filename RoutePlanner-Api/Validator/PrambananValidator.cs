@@ -47,16 +47,22 @@ public class PrambananValidator
             // cari lon lat yang ngga valid (tidak di indonesia) (not valid), apabila diswap valid, makan hasil akan valid (valid)
             if (!TryNormalizeLonLatIndonesia(ref lon, ref lat))
             {
-                list_not_valid_so.Add(new NotValidLonLatSo
-                {
-                    so_no = so.TrxID,
-                    address_id = so.TripId,
-                    address_name = so.TripName,
-                    warehouse_code = so.PoolID,
-                    lon = so.TripLong,
-                    lat = so.TripLat
-                });
+                // list_not_valid_so.Add(new NotValidLonLatSo
+                // {
+                //     so_no = so.TrxID,
+                //     address_id = so.TripId,
+                //     address_name = so.TripName,
+                //     warehouse_code = so.PoolID,
+                //     lon = so.TripLong,
+                //     lat = so.TripLat
+                // });
 
+                list_valid_so.Add(so with
+                {
+                    TripLong = string.Empty,
+                    TripLat = string.Empty,
+                    IsValidLonLat = 0
+                });
                 continue;
             }
 

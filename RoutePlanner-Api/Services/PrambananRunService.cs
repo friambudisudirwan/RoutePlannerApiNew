@@ -68,7 +68,7 @@ public class PrambananRunService
 
             // ** delete apabila ada so yang nggak dapet runid (meskipun ngga mungkin)
             var sql = "DELETE FROM api_mst_trip WHERE runid = '' AND usrupd = @user_id AND dtmupd = @current_date_time";
-            var cmd_delete = new CommandDefinition(sql, new { user_id, current_date_time }, cancellationToken: cancellationToken);
+            var cmd_delete = new CommandDefinition(sql, new { user_id, current_date_time }, cancellationToken: cancellationToken, commandTimeout: 60 * 5);
             await conn.ExecuteAsync(cmd_delete);
 
             // ** hit broker rabbitmq buat jalanin background service
@@ -89,6 +89,11 @@ public class PrambananRunService
         }
         catch (Exception ex)
         {
+            // ** delete apabila ada so yang nggak dapet runid (meskipun ngga mungkin)
+            var sql = "DELETE FROM api_mst_trip WHERE runid = '' AND usrupd = @user_id AND dtmupd = @current_date_time";
+            var cmd_delete = new CommandDefinition(sql, new { user_id, current_date_time }, cancellationToken: cancellationToken, commandTimeout: 60 * 5);
+            await conn.ExecuteAsync(cmd_delete);
+
             _logger.LogError(ex, "Internal server error");
             throw;
         }

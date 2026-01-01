@@ -10,9 +10,11 @@ public interface IBrokerService
 }
 public class BrokerService
 (
-    IConfiguration config
+    IConfiguration config,
+    ILogger<BrokerService> logger
 ) : IBrokerService, IHostedService, IDisposable
 {
+    private readonly ILogger<BrokerService> _logger = logger;
     private readonly dynamic _brokerConfig = config.GetSection("RabbitMQConfig");
     private IConnection? _conn;
     private IChannel? _channel;
@@ -29,6 +31,8 @@ public class BrokerService
 
         _conn = await factory.CreateConnectionAsync(cancellationToken);
         _channel = await _conn.CreateChannelAsync(cancellationToken: cancellationToken);
+
+        _logger.LogInformation("Broker Service connected to Message Broker");
     }
 
     public async Task PublishMessage(string exchange, string routing_key, string message)
@@ -51,6 +55,8 @@ public class BrokerService
             routingKey: routing_key,
             body: body
         );
+
+        _logger.LogInformation("message published with payload : {payload}", message);
     }
 
     public async Task StopAsync(CancellationToken cancellationToken)
@@ -60,6 +66,8 @@ public class BrokerService
 
         if (_conn != null)
             await _conn.DisposeAsync();
+
+        _logger.LogInformation("Broker and SQL connection dispossed.");
     }
 
     public void Dispose() { }
