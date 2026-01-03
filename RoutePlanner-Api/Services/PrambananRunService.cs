@@ -218,11 +218,11 @@ public class PrambananRunService
         // await conn.ExecuteAsync(cmd_delete);
 
         var map_trips = trips.Select((x, i) => x with { SeqNo = i + 1, UsrUpd = UserId, DtmUpd = current_date_time });
-        var sql = @"INSERT INTO api_mst_trip (RunID, SeqNo, TripID, TripName, TripLong, TripLat, CityName,
+        var sql = @"INSERT INTO api_mst_trip (RunID, SeqNo, TripID, TripName, TripAddress, TripLong, TripLat, CityName,
                                               Capacity, Balance, TrxID, Warehouse, BU, PL, PS, StorageType, 
                                               NoSo, CodeCustomer, Segment, TotalQty, TotalGrossVolume, IsAllowRoute,
                                               IsValidLonLat, UsrUpd, DtmUpd, source_data)
-                    VALUES ('', @seqno, @tripid, @tripname, @triplong, @triplat, @cityname,
+                    VALUES ('', @seqno, @tripid, @tripname, @address, @triplong, @triplat, @cityname,
                             @capacity, @balance, @trxid, @poolid, @bu, @pl, @ps, @storagetype, 
                             @noso, @codecustomer, @segment, @totalqty, @totalgrossvolume, 1,
                             @isvalidlonlat, @usrupd, @dtmupd, 'Api-Prambanan')";
@@ -253,7 +253,7 @@ public class PrambananRunService
         var sql = @"SELECT runid FROM api_mst_trip WITH(NOLOCK)
                     WHERE usrupd = @user_id AND dtmupd = @current_date_time AND runid != ''
                     GROUP BY runid";
-        var cmd2 = new CommandDefinition(sql, new { user_id, current_date_time }, commandType: CommandType.Text, cancellationToken: cancellationToken);
+        var cmd2 = new CommandDefinition(sql, new { user_id, current_date_time }, commandType: CommandType.Text, cancellationToken: cancellationToken, commandTimeout: 60 * 5);
         var list_runid = await conn.QueryAsync<string>(cmd2);
 
         return [.. list_runid];

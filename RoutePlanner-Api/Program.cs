@@ -12,16 +12,16 @@ var builder = WebApplication.CreateBuilder(args);
 var jwtConfig = builder.Configuration.GetSection("JwtSettings");
 var key = Encoding.UTF8.GetBytes(jwtConfig["SecretKey"] ?? throw new ArgumentNullException("Jwt Config is empty"));
 
-LoggerProviderOptions.RegisterProviderOptions<EventLogSettings, EventLogLoggerProvider>(builder.Services);
-// Konfigurasi logging yang lebih detail
-builder.Logging.ClearProviders();
-builder.Logging.AddConsole();
-builder.Logging.AddDebug();
-builder.Logging.AddEventLog(options =>
-{
-    options.LogName = "Application";
-    options.SourceName = "RoutePlannerApiLog";
-});
+// LoggerProviderOptions.RegisterProviderOptions<EventLogSettings, EventLogLoggerProvider>(builder.Services);
+// // Konfigurasi logging yang lebih detail
+// builder.Logging.ClearProviders();
+// builder.Logging.AddConsole();
+// builder.Logging.AddDebug();
+// builder.Logging.AddEventLog(options =>
+// {
+//     options.LogName = "Application";
+//     options.SourceName = "RoutePlannerApiLog";
+// });
 
 // Add services to the container.
 builder.Services.AddAuthentication(options =>

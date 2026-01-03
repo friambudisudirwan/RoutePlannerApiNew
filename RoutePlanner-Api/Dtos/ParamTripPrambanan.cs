@@ -18,6 +18,9 @@ public record ParamTripPrambanan
     [JsonPropertyName("address_name")]
     public string? TripName { get; set; }
 
+    [JsonPropertyName("address")]
+    public string? Address { get; set; }
+
     [JsonPropertyName("city_name")]
     public string? CityName { get; set; }
     
