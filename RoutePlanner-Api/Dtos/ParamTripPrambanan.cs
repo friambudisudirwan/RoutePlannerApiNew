@@ -5,6 +5,12 @@ namespace RoutePlanner_Api.Dtos;
 
 public record ParamTripPrambanan
 {
+    [JsonPropertyName("car_plate")]
+    public string? PoliceNo { get; set; }
+    
+    [JsonPropertyName("seq_no")]
+    public int? SeqNoManual { get; set; }
+
     [JsonPropertyName("warehouse_code")]
     public required string PoolID { get; set; }
     public int? SeqNo { get; set; }
@@ -23,7 +29,7 @@ public record ParamTripPrambanan
 
     [JsonPropertyName("city_name")]
     public string? CityName { get; set; }
-    
+
     [JsonPropertyName("lon")]
     public required string TripLong { get; set; }
 

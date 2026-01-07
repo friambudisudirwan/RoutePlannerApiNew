@@ -24,7 +24,20 @@ namespace RoutePlanner_Api.Controllers
         {
             try
             {
-                var list_runid = await _runService.CreatePrambananRunsheets(param, cancellationToken);
+                var list_runid = new List<string>();
+                var check_is_manual_routing = param.Data.Count(x => !string.IsNullOrWhiteSpace(x.PoliceNo));
+
+                if (check_is_manual_routing > 0)
+                {
+                    // ** manual routing
+                    var fetch_list_runid = await _runService.CreatePrambananManualRunsheets(param, cancellationToken);
+                }
+                else
+                {
+                    // ** automatic planning
+                    var fetch_list_runid = await _runService.CreatePrambananRunsheets(param, cancellationToken);
+                    list_runid.AddRange(list_runid);
+                }
 
                 return StatusCode((int)HttpStatusCode.Created, new
                 {

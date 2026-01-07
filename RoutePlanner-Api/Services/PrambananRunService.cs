@@ -8,6 +8,7 @@ using RoutePlanner_Api.Dtos;
 using RoutePlanner_Api.Exceptions;
 using RoutePlanner_Api.Validator;
 using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.Data.SqlClient;
 
 namespace RoutePlanner_Api.Services;
 
@@ -29,6 +30,45 @@ public class PrambananRunService
     private readonly PrambananValidator _validator = validator;
     private readonly string _vtsApiUrl = config.GetSection("Configs")["VtsApiUrl"] ?? throw new ArgumentNullException("Vts Api Url is empty");
 
+    public async Task<List<string>> CreatePrambananManualRunsheets(ParamCreateRunsheetPrambanan param, CancellationToken cancellationToken)
+    {
+        var company_id = _userIdentity.GetCompanyId();
+        var user_id = _userIdentity.GetUserId();
+        var current_date_time = Convert.ToDateTime(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
+
+        if (param.StartTime == DateTime.MinValue) throw new PrambananSoValidationException("start_time format is not a valid date format.", [], []);
+
+        using var conn = _vrp.CreateConnection();
+        if (conn.State == ConnectionState.Closed) await conn.OpenAsync(cancellationToken);
+
+        try
+        {
+            var validate = _validator.ValidatePrambananSo(param.Data);
+            if (!validate.result) throw new PrambananSoValidationException("Bad Request", validate.list_duplicate_so, validate.list_not_valid_lon_lat);
+
+            // ** insert trips
+            await InsertPrambananTrips
+            (
+                current_date_time,
+                user_id ?? "",
+                validate.list_so,
+                conn,
+                cancellationToken
+            );
+        }
+        catch (Exception ex)
+        {
+            // ** delete apabila ada so yang nggak dapet runid (meskipun ngga mungkin)
+            var sql = "DELETE FROM api_mst_trip WHERE runid = '' AND usrupd = @user_id AND dtmupd = @current_date_time";
+            var cmd_delete = new CommandDefinition(sql, new { user_id, current_date_time }, cancellationToken: cancellationToken, commandTimeout: 60 * 5);
+            await conn.ExecuteAsync(cmd_delete);
+
+            _logger.LogError(ex, "Internal server error");
+            throw;
+        }
+
+        return [];
+    }
     public async Task<List<string>> CreatePrambananRunsheets(ParamCreateRunsheetPrambanan param, CancellationToken cancellationToken)
     {
         var company_id = _userIdentity.GetCompanyId();
@@ -67,9 +107,7 @@ public class PrambananRunService
             );
 
             // ** delete apabila ada so yang nggak dapet runid (meskipun ngga mungkin)
-            var sql = "DELETE FROM api_mst_trip WHERE runid = '' AND usrupd = @user_id AND dtmupd = @current_date_time";
-            var cmd_delete = new CommandDefinition(sql, new { user_id, current_date_time }, cancellationToken: cancellationToken, commandTimeout: 60 * 5);
-            await conn.ExecuteAsync(cmd_delete);
+            await DeleteTripWithNoRunIDByTime(user_id ?? "", current_date_time, conn, cancellationToken);
 
             // ** hit broker rabbitmq buat jalanin background service
             await _brokerServie.PublishMessage
@@ -89,11 +127,7 @@ public class PrambananRunService
         }
         catch (Exception ex)
         {
-            // ** delete apabila ada so yang nggak dapet runid (meskipun ngga mungkin)
-            var sql = "DELETE FROM api_mst_trip WHERE runid = '' AND usrupd = @user_id AND dtmupd = @current_date_time";
-            var cmd_delete = new CommandDefinition(sql, new { user_id, current_date_time }, cancellationToken: cancellationToken, commandTimeout: 60 * 5);
-            await conn.ExecuteAsync(cmd_delete);
-
+            await DeleteTripWithNoRunIDByTime(user_id ?? "", current_date_time, conn, cancellationToken);
             _logger.LogError(ex, "Internal server error");
             throw;
         }
@@ -187,6 +221,14 @@ public class PrambananRunService
         }
     }
 
+    private static async Task DeleteTripWithNoRunIDByTime(string user_id, DateTime dtmupd, DbConnection conn, CancellationToken cancellationToken)
+    {
+        // ** delete apabila ada so yang nggak dapet runid (meskipun ngga mungkin)
+        var sql = "DELETE FROM api_mst_trip WHERE runid = '' AND usrupd = @user_id AND dtmupd = @dtmupd";
+        var cmd_delete = new CommandDefinition(sql, new { user_id, dtmupd }, cancellationToken: cancellationToken, commandTimeout: 60 * 5);
+        await conn.ExecuteAsync(cmd_delete);
+    }
+
     private static async Task PrerunPrambananPo
     (
         List<string> list_runid,
@@ -213,16 +255,12 @@ public class PrambananRunService
         CancellationToken cancellationToken
     )
     {
-        // var sql = "DELETE FROM api_mst_trip WHERE runid = ''";
-        // var cmd_delete = new CommandDefinition(sql, cancellationToken: cancellationToken);
-        // await conn.ExecuteAsync(cmd_delete);
-
         var map_trips = trips.Select((x, i) => x with { SeqNo = i + 1, UsrUpd = UserId, DtmUpd = current_date_time });
-        var sql = @"INSERT INTO api_mst_trip (RunID, SeqNo, TripID, TripName, TripAddress, TripLong, TripLat, CityName,
+        var sql = @"INSERT INTO api_mst_trip (CarIDManual, SeqNoManual, RunID, SeqNo, TripID, TripName, TripAddress, TripLong, TripLat, CityName,
                                               Capacity, Balance, TrxID, Warehouse, BU, PL, PS, StorageType, 
                                               NoSo, CodeCustomer, Segment, TotalQty, TotalGrossVolume, IsAllowRoute,
                                               IsValidLonLat, UsrUpd, DtmUpd, source_data)
-                    VALUES ('', @seqno, @tripid, @tripname, @address, @triplong, @triplat, @cityname,
+                    VALUES (@policeno, @seqnomanual, '', @seqno, @tripid, @tripname, @address, @triplong, @triplat, @cityname,
                             @capacity, @balance, @trxid, @poolid, @bu, @pl, @ps, @storagetype, 
                             @noso, @codecustomer, @segment, @totalqty, @totalgrossvolume, 1,
                             @isvalidlonlat, @usrupd, @dtmupd, 'Api-Prambanan')";
