@@ -55,6 +55,30 @@ public class PrambananRunService
                 conn,
                 cancellationToken
             );
+
+            // ** pre run inserted trips
+            var list_runid = await PrerunPrambananTripsManual
+            (
+                company_id,
+                user_id ?? "",
+                param.StartTime,
+                current_date_time,
+                conn,
+                cancellationToken
+            );
+
+            // ** run calculate loop
+            await CalculateRouteLoop(user_id ?? "", current_date_time, conn, cancellationToken);
+
+            // ** hit polyline service per runid
+            foreach (var runid in list_runid)
+            {
+                await _brokerServie.PublishMessage(
+                    exchange: _brokerConfig["PolylineExchangeName"],
+                    routing_key: _brokerConfig["PolylineRoutingKey"],
+                    message: JsonConvert.SerializeObject(new { runid, userid = user_id })
+                );
+            }
         }
         catch (Exception ex)
         {
@@ -267,6 +291,50 @@ public class PrambananRunService
 
         var cmd = new CommandDefinition(sql, map_trips, commandType: CommandType.Text, cancellationToken: cancellationToken, commandTimeout: 60 * 15);
         await conn.ExecuteAsync(cmd);
+    }
+
+    private static async Task CalculateRouteLoop
+    (
+        string user_id,
+        DateTime current_date_time,
+        DbConnection conn,
+        CancellationToken cancellationToken
+    )
+    {
+        var p = new DynamicParameters();
+        p.Add("@dtmupd", current_date_time, DbType.DateTime, ParameterDirection.Input);
+        p.Add("@usrupd", user_id, DbType.String, ParameterDirection.Input);
+
+        var cmd_prerun = new CommandDefinition("sp_run_prambanan_calc_loop", p, commandType: CommandType.StoredProcedure, cancellationToken: cancellationToken);
+        await conn.ExecuteAsync(cmd_prerun);
+    }
+
+    private static async Task<List<string>> PrerunPrambananTripsManual
+    (
+        int company_id,
+        string user_id,
+        DateTime current_date_time,
+        DateTime start_time,
+        DbConnection conn,
+        CancellationToken cancellationToken
+    )
+    {
+        var p = new DynamicParameters();
+        p.Add("@company_id", company_id, DbType.Int32, ParameterDirection.Input);
+        p.Add("@usrupd", user_id, DbType.String, ParameterDirection.Input);
+        p.Add("@dtmupd", current_date_time, DbType.DateTime, ParameterDirection.Input);
+        p.Add("@start_time", start_time, DbType.DateTime, ParameterDirection.Input);
+
+        var cmd_prerun = new CommandDefinition("sp_prerun_prambanan_manual", p, commandType: CommandType.StoredProcedure, cancellationToken: cancellationToken);
+        await conn.ExecuteAsync(cmd_prerun);
+
+        var sql = @"SELECT runid FROM api_mst_trip WITH(NOLOCK)
+                    WHERE usrupd = @user_id AND dtmupd = @current_date_time AND runid != ''
+                    GROUP BY runid";
+        var cmd2 = new CommandDefinition(sql, new { user_id, current_date_time }, commandType: CommandType.Text, cancellationToken: cancellationToken, commandTimeout: 60 * 5);
+        var list_runid = await conn.QueryAsync<string>(cmd2);
+
+        return [.. list_runid];
     }
 
     private static async Task<List<string>> PrerunPrambananTrips
