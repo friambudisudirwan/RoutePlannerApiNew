@@ -59,12 +59,12 @@ public class PrambananRunService
             // ** pre run inserted trips
             var list_runid = await PrerunPrambananTripsManual
             (
-                company_id,
-                user_id ?? "",
-                param.StartTime,
-                current_date_time,
-                conn,
-                cancellationToken
+                company_id: company_id,
+                user_id: user_id ?? "",
+                current_date_time: current_date_time,
+                start_time: param.StartTime,
+                conn: conn,
+                cancellationToken: cancellationToken
             );
 
             // ** run calculate loop
@@ -79,6 +79,8 @@ public class PrambananRunService
                     message: JsonConvert.SerializeObject(new { runid, userid = user_id })
                 );
             }
+
+            return list_runid;
         }
         catch (Exception ex)
         {
@@ -90,8 +92,6 @@ public class PrambananRunService
             _logger.LogError(ex, "Internal server error");
             throw;
         }
-
-        return [];
     }
     public async Task<List<string>> CreatePrambananRunsheets(ParamCreateRunsheetPrambanan param, CancellationToken cancellationToken)
     {
@@ -325,7 +325,7 @@ public class PrambananRunService
         p.Add("@dtmupd", current_date_time, DbType.DateTime, ParameterDirection.Input);
         p.Add("@start_time", start_time, DbType.DateTime, ParameterDirection.Input);
 
-        var cmd_prerun = new CommandDefinition("sp_prerun_prambanan_manual", p, commandType: CommandType.StoredProcedure, cancellationToken: cancellationToken);
+        var cmd_prerun = new CommandDefinition("sp_prerun_prambanan_manual", p, commandType: CommandType.StoredProcedure, cancellationToken: cancellationToken, commandTimeout: 60 * 5);
         await conn.ExecuteAsync(cmd_prerun);
 
         var sql = @"SELECT runid FROM api_mst_trip WITH(NOLOCK)

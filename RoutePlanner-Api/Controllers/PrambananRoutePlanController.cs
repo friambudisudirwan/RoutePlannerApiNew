@@ -31,6 +31,7 @@ namespace RoutePlanner_Api.Controllers
                 {
                     // ** manual routing
                     var fetch_list_runid = await _runService.CreatePrambananManualRunsheets(param, cancellationToken);
+                    list_runid.AddRange(fetch_list_runid);
                 }
                 else
                 {
