@@ -162,6 +162,8 @@ public class PrambananRunService
         using var conn = _vrp.CreateConnection();
         if (conn.State == ConnectionState.Closed) await conn.OpenAsync(cancellationToken);
 
+        _logger.LogInformation("Param received at {time}, param : {param}", DateTime.Now, JsonConvert.SerializeObject(param));
+
         try
         {
             var company_id = _userIdentity.GetCompanyId();
@@ -196,12 +198,10 @@ public class PrambananRunService
                 var cmd = new CommandDefinition("sp_posting_do_tms", p, commandType: CommandType.StoredProcedure, cancellationToken: cancellationToken);
                 var fetch_do_post_param = await conn.QueryFirstOrDefaultAsync<string>(cmd) ?? throw new CreateRunsheetException("No data when preparing to integrate to TMS EasyGo. Internal server error");
                 var do_post_param = JsonConvert.DeserializeObject<ParamCreateDoByGeoCode>(fetch_do_post_param);
-
-                // ** update route to IsPostDo = 1
-                sql = @"UPDATE api_trx_route SET IsPostDO = 1
-                        WHERE RunId = @runid AND CarID = @carid";
-                var cmd3 = new CommandDefinition(sql, new { runid = run.RunId, carid = run.CarId }, commandType: CommandType.Text, cancellationToken: cancellationToken);
-                var update_route_ispostdo_status = await conn.ExecuteAsync(cmd3);
+                if(do_post_param.shipment is not null)
+                {
+                    do_post_param.alert_email = "transport1.ndc@prb.co.id;transport2.ndc@prb.co.id;transport3.ndc@prb.co.id;transport4.ndc@prb.co.id;transport1.edc@prb.co.id;transport2.edc@prb.co.id;transport3.3dc@prb.co.id;saefudin@prb.co.id;j.prasetyo@prb.co.id;s.arifin@prb.co.id";
+                }
 
                 // **hit vts api create do by code
                 var client = new RestClient(_vtsApiUrl);
@@ -223,7 +223,13 @@ public class PrambananRunService
                 if (!response.IsSuccessStatusCode) throw new InvalidOperationException(response.ErrorMessage);
 
                 var responseData = JsonConvert.DeserializeObject<VtsApiResponseBase<DoIdData>>(response.Content ?? "") ?? throw new InvalidOperationException("Failed when integrating to TMS EasyGO");
-                if (responseData.ResponseCode != 1) throw new InvalidOperationException(responseData.ResponseMessage);
+                if (responseData.ResponseCode != 1) throw new CreateRunsheetException(responseData?.ResponseMessage ?? "");
+
+                // ** update route to IsPostDo = 1
+                sql = @"UPDATE api_trx_route SET IsPostDO = 1
+                        WHERE RunId = @runid AND CarID = @carid";
+                var cmd3 = new CommandDefinition(sql, new { runid = run.RunId, carid = run.CarId }, commandType: CommandType.Text, cancellationToken: cancellationToken);
+                var update_route_ispostdo_status = await conn.ExecuteAsync(cmd3);
 
                 list_do_id.Add(responseData.Data?.do_id ?? 0);
             }

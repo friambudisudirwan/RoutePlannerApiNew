@@ -1,6 +1,7 @@
 using System.Net;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.ModelBinding.Binders;
 using RoutePlanner_Api.Dtos;
 using RoutePlanner_Api.Exceptions;
 using RoutePlanner_Api.Services;
@@ -87,17 +88,17 @@ namespace RoutePlanner_Api.Controllers
             }
             catch (InvalidOperationException ex)
             {
-                _logger.LogWarning(ex, "Unexpected error while creating prambanan runsheets");
+                _logger.LogWarning(ex, "Unexpected error while creating prambanan runsheets at {time}", DateTime.Now);
                 return StatusCode((int)HttpStatusCode.InternalServerError, new { message = $"Internal server error. {ex.Message}" });
             }
             catch (CreateRunsheetException ex)
             {
-                _logger.LogWarning(ex, "Failed when integrating prambanan runsheets.");
+                _logger.LogWarning(ex, "Failed when integrating prambanan runsheets at {time}.", DateTime.Now);
                 return StatusCode((int)HttpStatusCode.UnprocessableEntity, new { message = ex.Message });
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed when creating runsheets. Internal server error.");
+                _logger.LogError(ex, "Failed when creating runsheets. Internal server error. at {time}", DateTime.Now);
                 return StatusCode((int)HttpStatusCode.InternalServerError, new { message = "Internal server error." });
             }
         }
