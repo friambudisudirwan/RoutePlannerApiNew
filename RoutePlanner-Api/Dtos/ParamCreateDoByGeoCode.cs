@@ -13,6 +13,7 @@ public class ParamCreateDoByGeoCode
     public int driver_id { get; set; }
     public required string driver_code { get; set; }
     public string? alert_email { get; set; }
+    public int allow_multiple_do { get; set; }
     public List<ParamCreateDoAsalTujuan> geo_asal { get; set; } = [];
     public List<ParamCreateDoAsalTujuan> geo_tujuan { get; set; } = [];
     public ParamCreateDoShipment? shipment {get; set;}
