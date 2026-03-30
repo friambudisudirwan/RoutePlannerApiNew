@@ -117,6 +117,9 @@ public class RunService
                     seq_trip++;
                 }
 
+                var cmd_queue = new CommandDefinition(@"UPDATE api_mst_pool SET InQueue = 1 WHERE RunID = @runid", new { runid = run_id }, transaction: trx, cancellationToken: cancellationToken);
+                await conn.ExecuteAsync(cmd_queue);
+
                 list_runid.Add(run_id);
             }
 

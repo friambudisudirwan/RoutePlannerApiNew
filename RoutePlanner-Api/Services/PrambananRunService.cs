@@ -198,7 +198,7 @@ public class PrambananRunService
                 var cmd = new CommandDefinition("sp_posting_do_tms", p, commandType: CommandType.StoredProcedure, cancellationToken: cancellationToken);
                 var fetch_do_post_param = await conn.QueryFirstOrDefaultAsync<string>(cmd) ?? throw new CreateRunsheetException("No data when preparing to integrate to TMS EasyGo. Internal server error");
                 var do_post_param = JsonConvert.DeserializeObject<ParamCreateDoByGeoCode>(fetch_do_post_param);
-                if(do_post_param.shipment is not null)
+                if (do_post_param.shipment is not null)
                 {
                     do_post_param.alert_email = "transport1.ndc@prb.co.id;transport2.ndc@prb.co.id;transport3.ndc@prb.co.id;transport4.ndc@prb.co.id;transport1.edc@prb.co.id;transport2.edc@prb.co.id;transport3.3dc@prb.co.id;saefudin@prb.co.id;j.prasetyo@prb.co.id;s.arifin@prb.co.id";
                 }
@@ -255,7 +255,7 @@ public class PrambananRunService
     {
         // ** delete apabila ada so yang nggak dapet runid (meskipun ngga mungkin)
         var sql = "DELETE FROM api_mst_trip WHERE runid = '' AND usrupd = @user_id AND dtmupd = @dtmupd";
-        var cmd_delete = new CommandDefinition(sql, new { user_id, dtmupd }, cancellationToken: cancellationToken, commandTimeout: 60 * 5);
+        var cmd_delete = new CommandDefinition(sql, new { user_id, dtmupd }, cancellationToken: cancellationToken, commandTimeout: 60 * 30);
         await conn.ExecuteAsync(cmd_delete);
     }
 
@@ -271,7 +271,7 @@ public class PrambananRunService
             var p = new DynamicParameters();
             p.Add("@runid", runid, DbType.String, ParameterDirection.Input);
 
-            var cmd = new CommandDefinition("sp_prerun_prambanan_po", p, commandType: CommandType.StoredProcedure, cancellationToken: cancellationToken);
+            var cmd = new CommandDefinition("sp_prerun_prambanan_po", p, commandType: CommandType.StoredProcedure, cancellationToken: cancellationToken, commandTimeout: 60 * 30);
             await conn.ExecuteAsync(cmd);
         }
     }
@@ -295,7 +295,7 @@ public class PrambananRunService
                             @noso, @codecustomer, @segment, @totalqty, @totalgrossvolume, 1,
                             @isvalidlonlat, @usrupd, @dtmupd, 'Api-Prambanan')";
 
-        var cmd = new CommandDefinition(sql, map_trips, commandType: CommandType.Text, cancellationToken: cancellationToken, commandTimeout: 60 * 15);
+        var cmd = new CommandDefinition(sql, map_trips, commandType: CommandType.Text, cancellationToken: cancellationToken, commandTimeout: 60 * 30);
         await conn.ExecuteAsync(cmd);
     }
 
@@ -311,7 +311,7 @@ public class PrambananRunService
         p.Add("@dtmupd", current_date_time, DbType.DateTime, ParameterDirection.Input);
         p.Add("@usrupd", user_id, DbType.String, ParameterDirection.Input);
 
-        var cmd_prerun = new CommandDefinition("sp_run_prambanan_calc_loop", p, commandType: CommandType.StoredProcedure, cancellationToken: cancellationToken);
+        var cmd_prerun = new CommandDefinition("sp_run_prambanan_calc_loop", p, commandType: CommandType.StoredProcedure, cancellationToken: cancellationToken, commandTimeout: 60 * 30);
         await conn.ExecuteAsync(cmd_prerun);
     }
 
@@ -331,13 +331,13 @@ public class PrambananRunService
         p.Add("@dtmupd", current_date_time, DbType.DateTime, ParameterDirection.Input);
         p.Add("@start_time", start_time, DbType.DateTime, ParameterDirection.Input);
 
-        var cmd_prerun = new CommandDefinition("sp_prerun_prambanan_manual", p, commandType: CommandType.StoredProcedure, cancellationToken: cancellationToken, commandTimeout: 60 * 5);
+        var cmd_prerun = new CommandDefinition("sp_prerun_prambanan_manual", p, commandType: CommandType.StoredProcedure, cancellationToken: cancellationToken, commandTimeout: 60 * 30);
         await conn.ExecuteAsync(cmd_prerun);
 
         var sql = @"SELECT runid FROM api_mst_trip WITH(NOLOCK)
                     WHERE usrupd = @user_id AND dtmupd = @current_date_time AND runid != ''
                     GROUP BY runid";
-        var cmd2 = new CommandDefinition(sql, new { user_id, current_date_time }, commandType: CommandType.Text, cancellationToken: cancellationToken, commandTimeout: 60 * 5);
+        var cmd2 = new CommandDefinition(sql, new { user_id, current_date_time }, commandType: CommandType.Text, cancellationToken: cancellationToken, commandTimeout: 60 * 30);
         var list_runid = await conn.QueryAsync<string>(cmd2);
 
         return [.. list_runid];
@@ -359,13 +359,13 @@ public class PrambananRunService
         p.Add("@dtmupd", current_date_time, DbType.DateTime, ParameterDirection.Input);
         p.Add("@start_time", start_time, DbType.DateTime, ParameterDirection.Input);
 
-        var cmd = new CommandDefinition("sp_prerun_prambanan", p, commandType: CommandType.StoredProcedure, cancellationToken: cancellationToken, commandTimeout: 60 * 15);
+        var cmd = new CommandDefinition("sp_prerun_prambanan_auto", p, commandType: CommandType.StoredProcedure, cancellationToken: cancellationToken, commandTimeout: 60 * 30);
         await conn.ExecuteAsync(cmd);
 
         var sql = @"SELECT runid FROM api_mst_trip WITH(NOLOCK)
                     WHERE usrupd = @user_id AND dtmupd = @current_date_time AND runid != ''
                     GROUP BY runid";
-        var cmd2 = new CommandDefinition(sql, new { user_id, current_date_time }, commandType: CommandType.Text, cancellationToken: cancellationToken, commandTimeout: 60 * 5);
+        var cmd2 = new CommandDefinition(sql, new { user_id, current_date_time }, commandType: CommandType.Text, cancellationToken: cancellationToken, commandTimeout: 60 * 30);
         var list_runid = await conn.QueryAsync<string>(cmd2);
 
         return [.. list_runid];
