@@ -69,6 +69,25 @@ namespace RoutePlanner_Api.Controllers
             }
         }
 
+        [HttpPost("UpdatePS")]
+        public async Task<IActionResult> UpdatePS(ParamUpdatePS param, CancellationToken cancellationToken)
+        {
+            try
+            {
+                await _runService.UpdatePS(param, cancellationToken);
+                return Ok(new {message = "PS data updated successfully"});
+            }
+            catch (UpdatePSNotFoundException ex)
+            {
+                return StatusCode((int)HttpStatusCode.NotFound, new { list_not_found_so = ex.ListNotFoundSo });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed when updating PS. Internal server error.");
+                return StatusCode((int)HttpStatusCode.InternalServerError, new { message = "Internal server error." });
+            }
+        }
+
         [HttpPost("IntegrateRunsheets")]
         public async Task<IActionResult> IntegrateRunsheets(ParamIntegrateRunsheets param, CancellationToken cancellationToken)
         {

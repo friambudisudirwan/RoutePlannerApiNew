@@ -18,12 +18,14 @@ public class PrambananRunService
     ILogger<RunService> logger,
     IBrokerService brokerService,
     VRPConnectionFactory vrp,
+    GPSBConnectionFactory gpsb,
     PrambananValidator validator,
     UserIdentityService userIdentity
 )
 {
     private readonly ILogger<RunService> _logger = logger;
     private readonly VRPConnectionFactory _vrp = vrp;
+    private readonly GPSBConnectionFactory _gpsb = gpsb;
     private readonly IBrokerService _brokerServie = brokerService;
     private readonly dynamic _brokerConfig = config.GetSection("RabbitMQConfig");
     private readonly UserIdentityService _userIdentity = userIdentity;
@@ -247,6 +249,82 @@ public class PrambananRunService
         }
         catch (Exception)
         {
+            throw;
+        }
+    }
+
+    public async Task UpdatePS(ParamUpdatePS param, CancellationToken cancellationToken)
+    {
+        var list_not_found_so = new List<ParamUpdatePSItem>();
+        var company_id = _userIdentity.GetCompanyId();
+
+        using (var conn = _gpsb.CreateConnection())
+        {
+            if (conn.State == ConnectionState.Closed) await conn.OpenAsync(cancellationToken);
+
+            const string sqlCheck = """
+                SELECT TOP 1 order_id
+                FROM tbl_order_header WITH (NOLOCK)
+                WHERE company_id = @company_id AND order_no = @so_no AND pl = @pl AND is_enabled = 1
+                """;
+
+            foreach (var row in param.Data)
+            {
+                var cmd = new CommandDefinition(sqlCheck, new { company_id, so_no = row.SoNo, pl = row.Pl }, cancellationToken: cancellationToken);
+                var order_id = await conn.QueryFirstOrDefaultAsync<long?>(cmd);
+                if (order_id is null or 0)
+                    list_not_found_so.Add(row);
+            }
+        }
+
+        if (list_not_found_so.Count > 0)
+            throw new UpdatePSNotFoundException(list_not_found_so);
+
+        const string sqlTrip = """
+            UPDATE api_mst_trip SET ps = @ps
+            WHERE TrxID = @so_no AND PL = @pl AND isdeleted = 0
+            """;
+
+        const string sqlOrderHeader = """
+            UPDATE tbl_order_header SET ps = @ps
+            WHERE company_id = @company_id AND order_no = @so_no AND pl = @pl AND is_enabled = 1
+            """;
+
+        using var connVrp = _vrp.CreateConnection();
+        if (connVrp.State == ConnectionState.Closed) await connVrp.OpenAsync(cancellationToken);
+        using var trxVrp = await connVrp.BeginTransactionAsync(cancellationToken);
+        try
+        {
+            foreach (var row in param.Data)
+            {
+                var cmdTrip = new CommandDefinition(sqlTrip, new { ps = row.Ps, so_no = row.SoNo, pl = row.Pl }, transaction: trxVrp, cancellationToken: cancellationToken);
+                await connVrp.ExecuteAsync(cmdTrip);
+            }
+
+            await trxVrp.CommitAsync(cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            await trxVrp.RollbackAsync(cancellationToken);
+            throw;
+        }
+
+        using var connGpsbUpd = _gpsb.CreateConnection();
+        if (connGpsbUpd.State == ConnectionState.Closed) await connGpsbUpd.OpenAsync(cancellationToken);
+        using var trxGpsb = await connGpsbUpd.BeginTransactionAsync(cancellationToken);
+        try
+        {
+            foreach (var row in param.Data)
+            {
+                var cmdHdr = new CommandDefinition(sqlOrderHeader, new { ps = row.Ps, company_id, so_no = row.SoNo, pl = row.Pl }, transaction: trxGpsb, cancellationToken: cancellationToken);
+                await connGpsbUpd.ExecuteAsync(cmdHdr);
+            }
+
+            await trxGpsb.CommitAsync(cancellationToken);
+        }
+        catch
+        {
+            await trxGpsb.RollbackAsync(cancellationToken);
             throw;
         }
     }
