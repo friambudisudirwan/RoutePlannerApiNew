@@ -5,6 +5,9 @@ namespace RoutePlanner_Api.Models;
 
 public class ParamCreateRunsheets
 {
+    [JsonPropertyName("source_name")]
+    public string? SourceName { get; set; }
+
     [JsonPropertyName("user")]
     public required ConfMstUser User { get; set; }
 

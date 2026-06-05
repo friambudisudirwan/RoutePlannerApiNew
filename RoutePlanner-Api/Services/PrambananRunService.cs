@@ -65,6 +65,7 @@ public class PrambananRunService
                 user_id: user_id ?? "",
                 current_date_time: current_date_time,
                 start_time: param.StartTime,
+                source_name: param.SourceName ?? "Prambanan Web Upload Manual",
                 conn: conn,
                 cancellationToken: cancellationToken
             );
@@ -128,6 +129,7 @@ public class PrambananRunService
                 user_id ?? "",
                 param.StartTime,
                 current_date_time,
+                param.SourceName ?? "API Integration",
                 conn,
                 cancellationToken
             );
@@ -389,7 +391,7 @@ public class PrambananRunService
         p.Add("@dtmupd", current_date_time, DbType.DateTime, ParameterDirection.Input);
         p.Add("@usrupd", user_id, DbType.String, ParameterDirection.Input);
 
-        var cmd_prerun = new CommandDefinition("sp_run_prambanan_calc_loop", p, commandType: CommandType.StoredProcedure, cancellationToken: cancellationToken, commandTimeout: 60 * 30);
+        var cmd_prerun = new CommandDefinition("sp_run_prambanan_calc_loop", p, commandType: CommandType.StoredProcedure, cancellationToken: cancellationToken, commandTimeout: 60 * 60);
         await conn.ExecuteAsync(cmd_prerun);
     }
 
@@ -399,6 +401,7 @@ public class PrambananRunService
         string user_id,
         DateTime current_date_time,
         DateTime start_time,
+        string source_name,
         DbConnection conn,
         CancellationToken cancellationToken
     )
@@ -408,6 +411,7 @@ public class PrambananRunService
         p.Add("@usrupd", user_id, DbType.String, ParameterDirection.Input);
         p.Add("@dtmupd", current_date_time, DbType.DateTime, ParameterDirection.Input);
         p.Add("@start_time", start_time, DbType.DateTime, ParameterDirection.Input);
+        p.Add("@source_name", source_name, DbType.String, ParameterDirection.Input);
 
         var cmd_prerun = new CommandDefinition("sp_prerun_prambanan_manual", p, commandType: CommandType.StoredProcedure, cancellationToken: cancellationToken, commandTimeout: 60 * 30);
         await conn.ExecuteAsync(cmd_prerun);
@@ -427,6 +431,7 @@ public class PrambananRunService
         string user_id,
         DateTime start_time,
         DateTime current_date_time,
+        string source_name,
         DbConnection conn,
         CancellationToken cancellationToken
     )
@@ -436,14 +441,15 @@ public class PrambananRunService
         p.Add("@usrupd", user_id, DbType.String, ParameterDirection.Input);
         p.Add("@dtmupd", current_date_time, DbType.DateTime, ParameterDirection.Input);
         p.Add("@start_time", start_time, DbType.DateTime, ParameterDirection.Input);
+        p.Add("@source_name", source_name, DbType.String, ParameterDirection.Input);
 
-        var cmd = new CommandDefinition("sp_prerun_prambanan_auto", p, commandType: CommandType.StoredProcedure, cancellationToken: cancellationToken, commandTimeout: 60 * 30);
+        var cmd = new CommandDefinition("sp_prerun_prambanan_auto", p, commandType: CommandType.StoredProcedure, cancellationToken: cancellationToken, commandTimeout: 60 * 60);
         await conn.ExecuteAsync(cmd);
 
         var sql = @"SELECT runid FROM api_mst_trip WITH(NOLOCK)
                     WHERE usrupd = @user_id AND dtmupd = @current_date_time AND runid != ''
                     GROUP BY runid";
-        var cmd2 = new CommandDefinition(sql, new { user_id, current_date_time }, commandType: CommandType.Text, cancellationToken: cancellationToken, commandTimeout: 60 * 30);
+        var cmd2 = new CommandDefinition(sql, new { user_id, current_date_time }, commandType: CommandType.Text, cancellationToken: cancellationToken, commandTimeout: 60 * 60);
         var list_runid = await conn.QueryAsync<string>(cmd2);
 
         return [.. list_runid];
