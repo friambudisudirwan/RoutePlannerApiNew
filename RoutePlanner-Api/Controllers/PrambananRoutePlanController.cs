@@ -2,6 +2,7 @@ using System.Net;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ModelBinding.Binders;
+using Newtonsoft.Json;
 using RoutePlanner_Api.Dtos;
 using RoutePlanner_Api.Exceptions;
 using RoutePlanner_Api.Services;
@@ -14,11 +15,13 @@ namespace RoutePlanner_Api.Controllers
     public class PrambananRoutePlanController
     (
         ILogger<PrambananRoutePlanController> logger,
-        PrambananRunService runService
+        PrambananRunService runService,
+        ActionLogService logService
     ) : ControllerBase
     {
         private readonly ILogger<PrambananRoutePlanController> _logger = logger;
         private readonly PrambananRunService _runService = runService;
+        private readonly ActionLogService _logService = logService;
 
         [HttpPost("CreateRunsheets")]
         public async Task<IActionResult> CreateRunsheets(ParamCreateRunsheetPrambanan param, CancellationToken cancellationToken)
@@ -72,10 +75,33 @@ namespace RoutePlanner_Api.Controllers
         [HttpPost("UpdatePS")]
         public async Task<IActionResult> UpdatePS(ParamUpdatePS param, CancellationToken cancellationToken)
         {
+            var trace_id = Guid.NewGuid().ToString();
+
             try
             {
+                await _logService.CreateLog
+                (
+                    runid: string.Empty,
+                    type: "parameter",
+                    action_name: "Controller.UpdatePS",
+                    log_body: JsonConvert.SerializeObject(param),
+                    trace_id: trace_id,
+                    cancellationToken: cancellationToken
+                );
+
                 await _runService.UpdatePS(param, cancellationToken);
-                return Ok(new {message = "PS data updated successfully"});
+
+                await _logService.CreateLog
+                (
+                    runid: string.Empty,
+                    type: "success",
+                    action_name: "PrambananRunService.UpdatePS",
+                    log_body: JsonConvert.SerializeObject(param.Data),
+                    trace_id: trace_id,
+                    cancellationToken: cancellationToken
+                );
+
+                return Ok(new { message = "PS data updated successfully" });
             }
             catch (UpdatePSNotFoundException ex)
             {
@@ -83,8 +109,18 @@ namespace RoutePlanner_Api.Controllers
             }
             catch (Exception ex)
             {
+                await _logService.CreateLog
+                (
+                    runid: string.Empty,
+                    type: "error",
+                    action_name: "PrambananRunService.UpdatePS",
+                    log_body: JsonConvert.SerializeObject(new { message = ex.Message }),
+                    trace_id: trace_id,
+                    cancellationToken: cancellationToken
+                );
+
                 _logger.LogError(ex, "Failed when updating PS. Internal server error.");
-                return StatusCode((int)HttpStatusCode.InternalServerError, new { message = "Internal server error." });
+                return StatusCode((int)HttpStatusCode.InternalServerError, new { message = "Internal server error.", trace_id });
             }
         }
 

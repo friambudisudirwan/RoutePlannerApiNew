@@ -59,6 +59,7 @@ builder.Services.AddScoped<GPSBConnectionFactory>();
 builder.Services.AddScoped<UserIdentityService>();
 builder.Services.AddScoped<AuthService>();
 builder.Services.AddSingleton<PrambananValidator>();
+builder.Services.AddScoped<ActionLogService>();
 builder.Services.AddScoped<PrambananRunService>();
 builder.Services.AddScoped<RunService>();
 
