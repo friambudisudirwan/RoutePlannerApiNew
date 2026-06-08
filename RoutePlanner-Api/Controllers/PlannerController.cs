@@ -2,6 +2,7 @@ using System.Net;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
+using RoutePlanner_Api.Dtos;
 using RoutePlanner_Api.Exceptions;
 using RoutePlanner_Api.Models;
 using RoutePlanner_Api.Services;
@@ -43,6 +44,20 @@ namespace RoutePlanner_Api.Controllers
             {
                 _logger.LogError(ex, "Failed when creating runsheet.");
                 return StatusCode((int)HttpStatusCode.InternalServerError, new { message = "Internal server error." });
+            }
+        }
+
+        [HttpPost("IntegrateRunsheet")]
+        public async Task<IActionResult> IntegrateRunsheet(ParamIntegrateRunsheets param, CancellationToken cancellationToken)
+        {
+            try
+            {
+
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed when integrating runsheet.");
+                return StatusCode(StatusCodes.Status500InternalServerError, new { message = $"Internal server error. Exception: {ex.Message}" });
             }
         }
     }
