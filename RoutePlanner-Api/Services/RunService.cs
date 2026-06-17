@@ -179,13 +179,14 @@ public class RunService
 
             foreach (var run in param.data)
             {
+
                 // ** cek apakah dari run dan car sudah ke-route
                 var sql = @"SELECT TOP 1 RunID FROM api_trx_route WITH(NOLOCK)
                             WHERE runid = @runid AND carid = @carid AND UsrUpd = @user_id";
                 var cmd_check = new CommandDefinition(sql, new { runid = run.RunId, carid = run.CarId, user_id }, commandType: CommandType.Text, transaction: trx, cancellationToken: cancellationToken);
                 var validate_route = await conn.QueryFirstOrDefaultAsync<string>(cmd_check);
 
-                if (string.IsNullOrEmpty(validate_route)) throw new CreateRunsheetException("Route mobil tidak ditemukan.");
+                if (string.IsNullOrEmpty(validate_route)) throw new CustomException("Route mobil tidak ditemukan.", StatusCodes.Status404NotFound);
 
                 // ** cek apakah route sudah terintegrasi
                 sql = @"SELECT TOP 1 RunID FROM api_trx_route WITH(NOLOCK)
@@ -193,7 +194,10 @@ public class RunService
                 var cmd_check2 = new CommandDefinition(sql, new { runid = run.RunId, carid = run.CarId, user_id }, commandType: CommandType.Text, transaction: trx, cancellationToken: cancellationToken);
                 var validate_route2 = await conn.QueryFirstOrDefaultAsync<string>(cmd_check2);
 
-                if (!string.IsNullOrEmpty(validate_route2)) throw new CreateRunsheetException("Route mobil sudah pernah diintegrasikan ke TMS EasyGo.");
+                if (!string.IsNullOrEmpty(validate_route2)) throw new CustomException("Route mobil sudah pernah diintegrasikan ke TMS EasyGo.", StatusCodes.Status422UnprocessableEntity);
+
+                // ** begin insert po
+
 
                 // ** begin post do
                 var p = new DynamicParameters();
