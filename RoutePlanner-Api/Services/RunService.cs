@@ -196,8 +196,9 @@ public class RunService
 
                 if (!string.IsNullOrEmpty(validate_route2)) throw new CustomException("Route mobil sudah pernah diintegrasikan ke TMS EasyGo.", StatusCodes.Status422UnprocessableEntity);
 
-                // ** begin insert po
+                // ** preparasi integrasi data yang dibutuhkan untuk tms easygo
 
+                
 
                 // ** begin post do
                 var p = new DynamicParameters();
