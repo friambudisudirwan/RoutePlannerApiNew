@@ -1,6 +1,7 @@
 using System.Net;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using RoutePlanner_Api.Dtos;
 using RoutePlanner_Api.Exceptions;
 using RoutePlanner_Api.Models;
 using RoutePlanner_Api.Services;
@@ -45,18 +46,38 @@ namespace RoutePlanner_Api.Controllers
             }
         }
 
-        // [HttpPost("IntegrateRunsheet")]
-        // public async Task<IActionResult> IntegrateRunsheet(ParamIntegrateRunsheets param, CancellationToken cancellationToken)
-        // {
-        //     try
-        //     {
+        [HttpPost("IntegrateRunsheets")]
+        public async Task<IActionResult> IntegrateRunsheets(ParamIntegrateRunsheets param, CancellationToken cancellationToken)
+        {
+            try
+            {
+                // ** hit post do
+                var list_do_id = await _runService.IntegrateRunsheets(param, cancellationToken);
 
-        //     }
-        //     catch (Exception ex)
-        //     {
-        //         _logger.LogError(ex, "Failed when integrating runsheet.");
-        //         return StatusCode(StatusCodes.Status500InternalServerError, new { message = $"Internal server error. Exception: {ex.Message}" });
-        //     }
-        // }
+                return StatusCode((int)HttpStatusCode.Created, new
+                {
+                    message = "Runsheets berhasil diintegrasikan ke TMS EasyGO.",
+                    data = list_do_id.Select(x => new
+                    {
+                        do_id = x
+                    })
+                });
+            }
+            catch (InvalidOperationException ex)
+            {
+                _logger.LogWarning(ex, "Unexpected error while creating prambanan runsheets at {time}", DateTime.Now);
+                return StatusCode((int)HttpStatusCode.InternalServerError, new { message = $"Internal server error. {ex.Message}" });
+            }
+            catch (CreateRunsheetException ex)
+            {
+                _logger.LogWarning(ex, "Failed when integrating prambanan runsheets at {time}.", DateTime.Now);
+                return StatusCode((int)HttpStatusCode.UnprocessableEntity, new { message = ex.Message });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed when creating runsheets. Internal server error. at {time}", DateTime.Now);
+                return StatusCode((int)HttpStatusCode.InternalServerError, new { message = "Internal server error." });
+            }
+        }
     }
 }

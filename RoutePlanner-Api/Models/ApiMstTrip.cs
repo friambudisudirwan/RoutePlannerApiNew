@@ -58,4 +58,7 @@ public class ApiMstTrip
 
     [JsonPropertyName("region_code")]
     public string? RegionCode { get; set; }
+
+    [JsonPropertyName("code_customer")]
+    public string? CodeCustomer { get; set; }
 }

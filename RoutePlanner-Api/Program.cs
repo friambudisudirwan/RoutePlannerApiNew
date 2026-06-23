@@ -57,6 +57,7 @@ builder.Services.AddSingleton<IBrokerService, BrokerService>();
 builder.Services.AddScoped<VRPConnectionFactory>();
 builder.Services.AddScoped<GPSBConnectionFactory>();
 builder.Services.AddScoped<UserIdentityService>();
+builder.Services.AddScoped<GPSBService>();
 builder.Services.AddScoped<AuthService>();
 builder.Services.AddSingleton<PrambananValidator>();
 builder.Services.AddScoped<ActionLogService>();
