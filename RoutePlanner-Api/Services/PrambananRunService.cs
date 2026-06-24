@@ -260,7 +260,7 @@ public class PrambananRunService
         var list_not_found_so = new List<ParamUpdatePSItem>();
         var company_id = _userIdentity.GetCompanyId();
 
-        using (var conn = _gpsb.CreateConnection())
+        using (var conn = await _gpsb.CreateConnection())
         {
             if (conn.State == ConnectionState.Closed) await conn.OpenAsync(cancellationToken);
 
@@ -311,7 +311,7 @@ public class PrambananRunService
             throw;
         }
 
-        using var connGpsbUpd = _gpsb.CreateConnection();
+        using var connGpsbUpd = await _gpsb.CreateConnection();
         if (connGpsbUpd.State == ConnectionState.Closed) await connGpsbUpd.OpenAsync(cancellationToken);
         using var trxGpsb = await connGpsbUpd.BeginTransactionAsync(cancellationToken);
         try

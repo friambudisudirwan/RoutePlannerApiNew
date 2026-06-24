@@ -20,14 +20,34 @@ public class GPSBService
         CancellationToken cancellationToken
     )
     {
-        using var conn = _conn.CreateConnection();
+        using var conn = await _conn.CreateConnection();
 
-        const string sql = @"SELECT car_plate, msisdn, vehicle_id FROM car_master WITH(NOLOCK)
+        const string sql = @"SELECT car_plate, msisdn, vehicle_id, driver_id FROM car_master WITH(NOLOCK)
                              WHERE company_id = @company_id AND car_plate IN @list_vehicle";
         var cmd = new CommandDefinition(sql, new { company_id, list_vehicle = list_police_no }, cancellationToken: cancellationToken);
         var list_gpsb_vehicle = await conn.QueryAsync<CarMaster>(cmd);
 
         return [.. list_gpsb_vehicle];
+    }
+
+    public async Task<CarMaster> FindGPSBVehicleByGpsSn
+    (
+        int company_id,
+        string gps_sn,
+        CancellationToken cancellationToken
+    )
+    {
+        using var conn = await _conn.CreateConnection();
+
+        const string sql = @"SELECT TOP 1 car_plate, msisdn, vehicle_id, driver_id FROM car_master WITH(NOLOCK)
+                             WHERE company_id = @company_id AND msisdn = @gps_sn";
+        var vehicle = await conn.QueryFirstOrDefaultAsync<CarMaster>(new CommandDefinition
+        (
+            sql, new { company_id, gps_sn },
+            cancellationToken: cancellationToken
+        )) ?? throw new CustomException($"Kendaraan dengan GPS SN: {gps_sn} tidak dapat ditemukan", StatusCodes.Status404NotFound);
+
+        return vehicle;
     }
 
     public async Task<List<Client>> GetGPSBClients
@@ -36,7 +56,7 @@ public class GPSBService
         CancellationToken cancellationToken
     )
     {
-        using var conn = _conn.CreateConnection();
+        using var conn = await _conn.CreateConnection();
 
         const string sql = @"SELECT client_id, code, name, address FROM tbl_client WITH(NOLOCK)
                              WHERE company_id = @company_id AND is_enabled = 1";
@@ -77,7 +97,7 @@ public class GPSBService
         CancellationToken cancellationToken
     )
     {
-        using var conn = _conn.CreateConnection();
+        using var conn = await _conn.CreateConnection();
 
         const string sql = @"SELECT id, code, name, address, relative_name, color, alert, 
                                     shapeid, points, lon, lat, lon1, stamp, companyid, categoryid, 
@@ -107,17 +127,17 @@ public class GPSBService
     {
         // cek terlebih dahulu apakah geofence sudah ada (validasi by code)
         var sql = @"SELECT TOP 1 id FROM tbl_geofence_area WITH(NOLOCK)
-                   WHERE companyid = @company_id AND code = @code AND is_enabled = 1";
+                   WHERE companyid = @company_id AND code = @code AND is_deleted = 0 AND enabled_status = 1";
         var existing_geo_id = await conn.QueryFirstOrDefaultAsync<int>(new CommandDefinition(sql, new { company_id, code }, transaction: trx, cancellationToken: cancellationToken));
         // terhitung sebagai unhandled exception
         if (existing_geo_id > 0) throw new CustomException($"Geofence data already exists, with code = {code}, name = {name}", StatusCodes.Status500InternalServerError);
 
         // simpan geofence
-        sql = @"INSERT INTO tbl_geofence_area (code, name, address, relative_name, color, alert
+        sql = @"INSERT INTO tbl_geofence_area (code, name, address, relative_name, color, alert,
                                                             shapeid, points, lon, lat, lon1, stamp, companyid, categoryid, 
                                                             geo_type, enabled_status, alert_telegram, alert_email, alert_over_time, 
                                                             is_deleted, usrupd, dtmupd)
-                            VALUES (@code, @name, @address, @relative_name, @color, @alert
+                            VALUES (@code, @name, @address, @relative_name, @color, @alert,
                                     @shapeid, @points, @lon, @lat, @lon1, @stamp, @companyid, @categoryid, 
                                     @geo_type, @enabled_status, @alert_telegram, @alert_email, @alert_over_time,
                                     @is_deleted, @usrupd, @dtmupd)";

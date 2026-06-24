@@ -10,6 +10,7 @@ using RoutePlanner_Api.Dtos;
 using RoutePlanner_Api.Exceptions;
 using RoutePlanner_Api.Models;
 using Microsoft.Data.SqlClient;
+using System.Globalization;
 
 namespace RoutePlanner_Api.Services;
 
@@ -21,6 +22,7 @@ public class RunService
     VRPConnectionFactory vrp,
     GPSBConnectionFactory gpsb,
     GPSBService gpsb_service,
+    IntegrateService integrate_service,
     UserIdentityService userIdentity
 )
 {
@@ -29,6 +31,7 @@ public class RunService
     private readonly GPSBConnectionFactory _gpsb = gpsb;
     private readonly IBrokerService _brokerServie = brokerService;
     private readonly GPSBService _gpsb_service = gpsb_service;
+    private readonly IntegrateService _integrate_service = integrate_service;
     private readonly dynamic _brokerConfig = config.GetSection("RabbitMQConfig");
     private readonly UserIdentityService _userIdentity = userIdentity;
     private readonly string _vtsApiUrl = config.GetSection("Configs")["VtsApiUrl"] ?? throw new ArgumentNullException("Vts Api Url is empty");
@@ -37,7 +40,7 @@ public class RunService
     {
 
         using var conn = _vrp.CreateConnection();
-        if (conn.State == ConnectionState.Closed) await conn.OpenAsync(cancellationToken);
+        // if (conn.State == ConnectionState.Closed) await conn.OpenAsync(cancellationToken);
         using var trx = await conn.BeginTransactionAsync(cancellationToken);
 
         try
@@ -173,7 +176,7 @@ public class RunService
         if (conn.State == ConnectionState.Closed) await conn.OpenAsync(cancellationToken);
         using var trx = await conn.BeginTransactionAsync(cancellationToken);
 
-        using var conn_gpsb = _gpsb.CreateConnection();
+        using var conn_gpsb = await _gpsb.CreateConnection();
         if (conn_gpsb.State == ConnectionState.Closed) await conn_gpsb.OpenAsync(cancellationToken);
         using var trx_gpsb = await conn_gpsb.BeginTransactionAsync(cancellationToken);
 
@@ -218,137 +221,83 @@ public class RunService
                     cancellationToken: cancellationToken
                 );
 
+                // ** create post do payload
+                var fetch_pool = GetPool(run.RunId, conn, trx, cancellationToken);
+                var fetch_trips = GetTrips(run.RunId, conn, trx, cancellationToken);
+                var fetch_vehicle = _gpsb_service.FindGPSBVehicleByGpsSn(company_id, run.CarId, cancellationToken);
 
+                await Task.WhenAll([fetch_pool, fetch_vehicle]);
 
+                var order_date = fetch_pool.Result.StartTime;
+                var car_plate = fetch_vehicle.Result.car_plate;
+                var driver_id = fetch_vehicle.Result.driver_id;
+                var geo_asal_code = fetch_pool.Result.PoolID;
+                var trips = fetch_trips.Result;
 
-                // // ** begin post do
-                // var p = new DynamicParameters();
-                // p.Add("@runid", run.RunId, DbType.String, ParameterDirection.Input);
-                // p.Add("@carid", run.CarId, DbType.String, ParameterDirection.Input);
+                // ** hit vtsapi untuk create do
+                var do_payload = new
+                {
+                    do_id = 0,
+                    tgl_do = order_date.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture),
+                    car_plate,
+                    allow_multiple_do = 1,
+                    no_do = $"{run.RunId}-{DateTime.Now:yyyyMMddHHmmss}",
+                    note = "Auto posting from route plan.",
+                    opsi_complete = 4,
+                    driver_id,
+                    geo_asal = new List<object>() { new { code = geo_asal_code } },
+                    geo_tujuan = trips.Select(x => new
+                    {
+                        code = x.TripId,
+                        no_sj = x.TrxID
+                    })
+                };
 
-                // var cmd = new CommandDefinition("sp_posting_do_tms", p, commandType: CommandType.StoredProcedure, transaction: trx, cancellationToken: cancellationToken);
-                // var fetch_do_post_param = await conn.QueryFirstOrDefaultAsync<string>(cmd) ?? throw new Exception("No data when preparing to integrate to TMS EasyGo. Internal server error");
-                // var do_post_param = JsonConvert.DeserializeObject<ParamCreateDoByGeoCode>(fetch_do_post_param);
+                var do_id = await _integrate_service.AddOrUpdateDOV1ByGeoCode(token_h2h, do_payload, cancellationToken);
 
-                // // ** update route to IsPostDo = 1
-                // sql = @"UPDATE api_trx_route SET IsPostDO = 1
-                //         WHERE RunId = @runid AND CarID = @carid";
-                // var cmd3 = new CommandDefinition(sql, new { runid = run.RunId, carid = run.CarId }, commandType: CommandType.Text, transaction: trx, cancellationToken: cancellationToken);
-                // var update_route_ispostdo_status = await conn.ExecuteAsync(cmd3);
+                // ** update route to IsPostDo = 1
+                sql = @"UPDATE api_trx_route SET IsPostDO = 1
+                        WHERE RunId = @runid AND CarID = @carid";
+                await conn.ExecuteAsync(new CommandDefinition
+                (
+                    sql, new { runid = run.RunId, carid = run.CarId }, transaction: trx, cancellationToken: cancellationToken
+                ));
 
-                // // **hit vts api create do by code
-                // var client = new RestClient(_vtsApiUrl);
-                // var request = new RestRequest("/api/do/AddOrUpdateDOV1ByGeoCode", Method.Post);
-
-                // // Header Token
-                // request.AddHeader("Content-Type", "application/json");
-                // request.AddHeader("Token", token_h2h);
-
-                // var request_body = JsonConvert.SerializeObject(do_post_param);
-                // request.AddParameter(
-                //     "application/json",
-                //     request_body,
-                //     ParameterType.RequestBody
-                // );
-
-                // var response = await client.ExecuteAsync(request, cancellationToken);
-
-                // if (!response.IsSuccessStatusCode) throw new Exception(response.ErrorMessage);
-
-                // var responseData = JsonConvert.DeserializeObject<VtsApiResponseBase<DoIdData>>(response.Content ?? "") ?? throw new ArgumentNullException("Failed when integrating to TMS EasyGO");
-                // if (responseData.ResponseCode != 1) throw new Exception(responseData.ResponseMessage);
-
-                // list_do_id.Add(responseData.Data?.do_id ?? 0);
+                list_do_id.Add(do_id);
             }
 
             // **commit trx
             await trx.CommitAsync(cancellationToken);
-            return list_do_id.Where(x => x > 0).ToList();
+            await trx_gpsb.CommitAsync(cancellationToken);
+            return [.. list_do_id.Where(x => x > 0)];
         }
         catch (InvalidOperationException)
         {
             await trx.RollbackAsync(cancellationToken);
+            await trx_gpsb.RollbackAsync(cancellationToken);
             throw;
         }
         catch (CreateRunsheetException)
         {
             await trx.RollbackAsync(cancellationToken);
+            await trx_gpsb.RollbackAsync(cancellationToken);
             throw;
         }
         catch (Exception)
         {
             await trx.RollbackAsync(cancellationToken);
+            await trx_gpsb.RollbackAsync(cancellationToken);
             throw;
         }
+        finally
+        {
+            await trx.DisposeAsync();
+            await trx_gpsb.DisposeAsync();
+
+            if (conn.State == ConnectionState.Open) await conn.CloseAsync();
+            if (conn_gpsb.State == ConnectionState.Open) await conn_gpsb.CloseAsync();
+        }
     }
-
-    // private static async Task PrerunPrambananPo
-    // (
-    //     List<string> list_runid,
-    //     DbConnection conn,
-    //     CancellationToken cancellationToken
-    // )
-    // {
-    //     foreach (var runid in list_runid)
-    //     {
-    //         var p = new DynamicParameters();
-    //         p.Add("@runid", runid, DbType.String, ParameterDirection.Input);
-
-    //         var cmd = new CommandDefinition("sp_prerun_prambanan_po", p, commandType: CommandType.StoredProcedure, cancellationToken: cancellationToken);
-    //         await conn.ExecuteAsync(cmd);
-    //     }
-    // }
-
-    // private static async Task InsertPrambananTrips
-    // (
-    //     DateTime current_date_time,
-    //     string UserId,
-    //     List<ParamTripPrambanan> trips,
-    //     DbConnection conn,
-    //     CancellationToken cancellationToken
-    // )
-    // {
-    //     var map_trips = trips.Select((x, i) => x with { SeqNo = i + 1, UsrUpd = UserId, DtmUpd = current_date_time });
-    //     var sql = @"INSERT INTO api_mst_trip (RunID, SeqNo, TripID, TripName, TripLong, TripLat, CityName,
-    //                                           Capacity, Balance, TrxID, Warehouse, BU, PL, PS, StorageType, 
-    //                                           NoSo, CodeCustomer, Segment, TotalQty, TotalGrossVolume, IsAllowRoute,
-    //                                           IsValidLonLat, UsrUpd, DtmUpd, source_data)
-    //                 VALUES ('', @seqno, @tripid, @tripname, @triplong, @triplat, @cityname,
-    //                         @capacity, @balance, @trxid, @poolid, @bu, @pl, @ps, @storagetype, 
-    //                         @noso, @codecustomer, @segment, @totalqty, @totalgrossvolume, 1,
-    //                         @isvalidlonlat, @usrupd, @dtmupd, 'Api-Prambanan')";
-
-    //     var cmd = new CommandDefinition(sql, map_trips, commandType: CommandType.Text, cancellationToken: cancellationToken);
-    //     await conn.ExecuteAsync(cmd);
-    // }
-
-    // private static async Task<List<string>> PrerunPrambananTrips
-    // (
-    //     int company_id,
-    //     string user_id,
-    //     DateTime start_time,
-    //     DateTime current_date_time,
-    //     DbConnection conn,
-    //     CancellationToken cancellationToken
-    // )
-    // {
-    //     var p = new DynamicParameters();
-    //     p.Add("@company_id", company_id, DbType.Int32, ParameterDirection.Input);
-    //     p.Add("@usrupd", user_id, DbType.String, ParameterDirection.Input);
-    //     p.Add("@dtmupd", current_date_time, DbType.DateTime, ParameterDirection.Input);
-    //     p.Add("@start_time", start_time, DbType.DateTime, ParameterDirection.Input);
-
-    //     var cmd = new CommandDefinition("sp_prerun_prambanan", p, commandType: CommandType.StoredProcedure, cancellationToken: cancellationToken);
-    //     await conn.ExecuteAsync(cmd);
-
-    //     var sql = @"SELECT runid FROM api_mst_trip WITH(NOLOCK)
-    //                 WHERE usrupd = @user_id AND dtmupd = @current_date_time AND runid != ''
-    //                 GROUP BY runid";
-    //     var cmd2 = new CommandDefinition(sql, new { user_id, current_date_time }, commandType: CommandType.Text, cancellationToken: cancellationToken);
-    //     var list_runid = await conn.QueryAsync<string>(cmd2);
-
-    //     return [.. list_runid];
-    // }
 
     private async Task PrerunIntegration
     (
@@ -364,7 +313,7 @@ public class RunService
     {
         // ** prepare master client dengan gpsb
         // select dari api_mst_trip
-        var sql = @"SELECT CustomerCode AS code, TripName AS name, TripAddress AS address 
+        var sql = @"SELECT CodeCustomer AS code, TripName AS name, TripAddress AS address 
                     FROM api_mst_trip WITH(NOLOCK)
                     WHERE runid = @runid";
         var vrp_client = await conn_vrp.QueryAsync<Client>(new CommandDefinition
@@ -381,16 +330,16 @@ public class RunService
         var not_in_gpsb_client = vrp_client.Where(x =>
                                     !gpsb_client.Select(y =>
                                         y.code.Trim().ToLower()
-                                    ).Contains(x.code.Trim().ToLower()));
+                                    ).Contains(x.code.Trim().ToLower())).GroupBy(x => x.code);
         // insert client
         foreach (var client in not_in_gpsb_client)
         {
             await _gpsb_service.SaveClient
             (
                 company_id: company_id,
-                code: client.code,
-                name: client.name,
-                address: client.address,
+                code: client.Key,
+                name: client.First().name,
+                address: client.First().address,
                 current_datetime: current_datetime,
                 conn: conn_gpsb,
                 trx: trx_gpsb,
@@ -399,22 +348,33 @@ public class RunService
         }
 
         // ** prepare master geofence dengan gpsb
-        // select dari api_mst_trip
-        sql = @"SELECT TripID AS [code], TripName AS [name], TripAddress AS [address],
-                       TripLong AS [lon], TripLat AS [lat]
-                FROM api_mst_trip WITH(NOLOCK)
-                WHERE runid = @runid";
-        var vrp_geofence = await conn_vrp.QueryAsync<GeofenceArea>(new CommandDefinition
-        (
-            sql,
-            new { runid },
-            transaction: trx_vrp,
-            cancellationToken: cancellationToken
-        ));
+        // select dari api_mst_pool dan api_mst_trip
+        var fetch_pool = GetPool(runid, conn_vrp, trx_vrp, cancellationToken);
+        var fetch_trips = GetTrips(runid, conn_vrp, trx_vrp, cancellationToken);
+
+        await Task.WhenAll([fetch_pool, fetch_trips]);
+
+        var pool = fetch_pool.Result;
+        var trips = fetch_trips.Result;
+
+        var vrp_geofence = new List<GeofenceArea>
+        {
+            // append pool terlebih dahulu sebagai geofence
+            new(){code = pool.PoolID, name = pool.PoolName, address = string.Empty, lon = Convert.ToDouble(pool.StartLong), lat = Convert.ToDouble(pool.StartLat)},
+        };
+        // append trips sebagai geofence
+        vrp_geofence.AddRange(trips.Select(x => new GeofenceArea
+        {
+            code = x.TripId,
+            name = x.TripName,
+            address = string.Empty,
+            lon = Convert.ToDouble(x.TripLong),
+            lat = Convert.ToDouble(x.TripLat)
+        }));
 
         // select dari gpsb
         var gpsb_geofence = await _gpsb_service.GetGPSBGeofences(company_id, cancellationToken);
-        var not_in_gpsb_geofence = vrp_geofence.Where(x => !gpsb_geofence.Select(y => y.code.Trim().ToLower()).Contains(x.code.Trim().ToLower()));
+        var not_in_gpsb_geofence = vrp_geofence.Where(x => !gpsb_geofence.Select(y => y.code.Trim().ToLower()).Contains(x.code.Trim().ToLower())).GroupBy(x => x.code);
 
         // insert geofence
         foreach (var geofence in not_in_gpsb_geofence)
@@ -422,12 +382,12 @@ public class RunService
             await _gpsb_service.SaveGeofence
             (
                 company_id: company_id,
-                code: geofence.code,
-                name: geofence.name,
-                address: geofence.address,
+                code: geofence.First().code,
+                name: geofence.First().name,
+                address: geofence.First().address,
                 relative_name: string.Empty,
-                lon: geofence.lon.ToString(),
-                lat: geofence.lat.ToString(),
+                lon: geofence.First().lon.ToString(),
+                lat: geofence.First().lat.ToString(),
                 current_datetime: current_datetime,
                 conn: conn_gpsb,
                 trx: trx_gpsb,
@@ -437,13 +397,7 @@ public class RunService
 
         // ** integrasi order ke gpsb
         // ambil starttime pool sebagai parameter order_date di tbl_order_header
-        sql = @"SELECT TOP 1 StartTime FROM api_mst_pool WITH(NOLOCK)
-                WHERE RunID = @runid";
-        var order_date = await conn_vrp.QueryFirstOrDefaultAsync<DateTime>(new CommandDefinition
-        (
-            sql, new { runid }, transaction: trx_vrp, cancellationToken: cancellationToken
-        ));
-        if (order_date == DateTime.MinValue) throw new CustomException("Data Pool tidak dapat ditemukan", StatusCodes.Status404NotFound);
+        var order_date = pool.StartTime;
 
         // ambil parameter untuk order dari api_mst_trip
         sql = @"SELECT TripId, CodeCustomer, Capacity, Balance, TrxID
@@ -492,6 +446,45 @@ public class RunService
                 cancellationToken: cancellationToken
             );
         }
+    }
+
+    private static async Task<ApiMstPool> GetPool
+    (
+        string runid,
+        DbConnection conn,
+        DbTransaction trx,
+        CancellationToken cancellationToken
+    )
+    {
+        var sql = @"SELECT TOP 1 PoolID, PoolName, StartTime, StartLong, StartLat 
+                    FROM api_mst_pool WITH(NOLOCK)
+                    WHERE RunID = @runid";
+        var pool = await conn.QueryFirstOrDefaultAsync<ApiMstPool>(new CommandDefinition
+        (
+            sql, new { runid }, transaction: trx, cancellationToken: cancellationToken
+        )) ?? throw new CustomException("Data Pool tidak dapat ditemukan", StatusCodes.Status404NotFound);
+        return pool;
+    }
+
+    private static async Task<List<ApiMstTrip>> GetTrips
+    (
+        string runid,
+        DbConnection conn,
+        DbTransaction trx,
+        CancellationToken cancellationToken
+    )
+    {
+        const string sql = @"SELECT RunID, TripID, TripName, TripLong, TripLat, TimeOpen, TimeClose,
+                                    TimeWait, TimeOperation, Capacity, Balance, LayananID, TripType,
+                                    MetodeHitung, Siklus, TrxID, ZoneCode, RegionCode, CodeCustomer
+                             FROM api_mst_trip WITH(NOLOCK)
+                             WHERE runid = @runid";
+        var trips = await conn.QueryAsync<ApiMstTrip>(new CommandDefinition
+        (
+            sql, new { runid }, transaction: trx, cancellationToken: cancellationToken
+        ));
+
+        return [.. trips];
     }
 
     private static bool IsValidLongLat(string input)

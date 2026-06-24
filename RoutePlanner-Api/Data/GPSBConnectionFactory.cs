@@ -7,7 +7,7 @@ public class GPSBConnectionFactory(IConfiguration config)
 {
     private readonly string _connectionstring = config.GetConnectionString("GPSB") ?? throw new ArgumentNullException("Connection String GPSB is empty.");
 
-    public DbConnection CreateConnection()
+    public async Task<DbConnection> CreateConnection()
     {
         return new SqlConnection(_connectionstring);
     }

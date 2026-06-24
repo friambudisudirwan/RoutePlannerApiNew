@@ -63,6 +63,11 @@ namespace RoutePlanner_Api.Controllers
                     })
                 });
             }
+            catch (CustomException ex)
+            {
+                _logger.LogError(ex.Message);
+                return StatusCode(ex.status_code, ex.Message);
+            }
             catch (InvalidOperationException ex)
             {
                 _logger.LogWarning(ex, "Unexpected error while creating prambanan runsheets at {time}", DateTime.Now);
