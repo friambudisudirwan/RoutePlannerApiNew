@@ -9,6 +9,9 @@ appsettings.*.json
 # dotenv files
 .env
 
+# keys
+*.pem
+
 # User-specific files
 *.rsuser
 *.suo
