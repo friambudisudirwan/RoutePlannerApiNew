@@ -63,6 +63,8 @@ builder.Services.AddSingleton<PrambananValidator>();
 builder.Services.AddScoped<ActionLogService>();
 builder.Services.AddScoped<PrambananRunService>();
 builder.Services.AddScoped<IntegrateService>();
+
+builder.Services.AddScoped<AdvantageIntegrationService>(); // khusus untuk advantage
 builder.Services.AddScoped<RunService>();
 
 builder.Services.AddHostedService(provider =>

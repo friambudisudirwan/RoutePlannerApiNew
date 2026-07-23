@@ -10,6 +10,8 @@ public class ParamUpdatePS
 
 public class ParamUpdatePSItem
 {
+    [JsonPropertyName("run_id")]
+    public required string RunID { get; set; }
     [JsonPropertyName("so_no")]
     public required string SoNo { get; set; }
 

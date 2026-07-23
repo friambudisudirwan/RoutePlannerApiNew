@@ -292,6 +292,13 @@ public class PrambananRunService
             WHERE company_id = @company_id AND order_no = @so_no AND pl = @pl AND is_enabled = 1
             """;
 
+        const string sqlDoHeader = """
+            UPDATE a SET a.ps = @ps
+            FROM tbl_do_v1_tujuan a
+            INNER JOIN tbl_do_v1_header b ON a.do_id = b.do_id
+            WHERE b.company_id = @company_id AND b.no_do lIKE @runid AND a.no_sj = @so_no and a.pl = @pl
+            """;
+
         using var connVrp = _vrp.CreateConnection();
         if (connVrp.State == ConnectionState.Closed) await connVrp.OpenAsync(cancellationToken);
         using var trxVrp = await connVrp.BeginTransactionAsync(cancellationToken);
@@ -320,6 +327,9 @@ public class PrambananRunService
             {
                 var cmdHdr = new CommandDefinition(sqlOrderHeader, new { ps = row.Ps, company_id, so_no = row.SoNo, pl = row.Pl }, transaction: trxGpsb, cancellationToken: cancellationToken);
                 await connGpsbUpd.ExecuteAsync(cmdHdr);
+
+                var cmdDo = new CommandDefinition(sqlDoHeader, new { company_id, runid = row.RunID + "%", so_no = row.SoNo, pl = row.Pl, ps = row.Ps }, transaction: trxGpsb, cancellationToken: cancellationToken);
+                await connGpsbUpd.ExecuteAsync(cmdDo);
             }
 
             await trxGpsb.CommitAsync(cancellationToken);
