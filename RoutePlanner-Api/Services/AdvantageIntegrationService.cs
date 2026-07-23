@@ -22,9 +22,6 @@ public sealed class AdvantageIntegrationService
         NullValueHandling = NullValueHandling.Include,
         DefaultValueHandling = DefaultValueHandling.Include
     };
-
-    private readonly RestClient _restClient;
-
     private static string ResolvePrivateKey(IConfiguration config)
     {
         var path = config.GetSection("AdvantageSCMIntegrationConfig")["PrivateKeyPath"];
