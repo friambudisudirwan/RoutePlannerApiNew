@@ -1,27 +1,16 @@
 using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
-using Microsoft.Extensions.Logging.Configuration;
-using Microsoft.Extensions.Logging.EventLog;
 using Microsoft.IdentityModel.Tokens;
 using RoutePlanner_Api.Data;
+using RoutePlanner_Api.OpenApi;
 using RoutePlanner_Api.Services;
 using RoutePlanner_Api.Validator;
+using Scalar.AspNetCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
 var jwtConfig = builder.Configuration.GetSection("JwtSettings");
 var key = Encoding.UTF8.GetBytes(jwtConfig["SecretKey"] ?? throw new ArgumentNullException("Jwt Config is empty"));
-
-// LoggerProviderOptions.RegisterProviderOptions<EventLogSettings, EventLogLoggerProvider>(builder.Services);
-// // Konfigurasi logging yang lebih detail
-// builder.Logging.ClearProviders();
-// builder.Logging.AddConsole();
-// builder.Logging.AddDebug();
-// builder.Logging.AddEventLog(options =>
-// {
-//     options.LogName = "Application";
-//     options.SourceName = "RoutePlannerApiLog";
-// });
 
 // Add services to the container.
 builder.Services.AddAuthentication(options =>
@@ -46,8 +35,12 @@ builder.Services.AddAuthentication(options =>
 });
 
 builder.Services.AddControllers();
-// Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
-// builder.Services.AddOpenApi();
+builder.Services.AddOpenApi(options =>
+{
+    options.AddDocumentTransformer<ApiInfoDocumentTransformer>();
+    options.AddDocumentTransformer<BearerSecuritySchemeTransformer>();
+    options.AddOperationTransformer<AuthorizeOperationTransformer>();
+});
 
 builder.Services.AddHttpContextAccessor();
 
@@ -77,7 +70,13 @@ var app = builder.Build();
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
 {
-    // app.MapOpenApi();
+    app.MapOpenApi();
+    app.MapScalarApiReference(options =>
+    {
+        options
+            .WithTitle("Route Planner API")
+            .WithDefaultHttpClient(ScalarTarget.CSharp, ScalarClient.HttpClient);
+    });
     app.UseDeveloperExceptionPage();
 }
 
