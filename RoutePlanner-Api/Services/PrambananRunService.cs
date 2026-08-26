@@ -164,7 +164,9 @@ public class PrambananRunService
     public async Task<List<long>> IntegrateRunsheets(ParamIntegrateRunsheets param, CancellationToken cancellationToken)
     {
         using var conn = _vrp.CreateConnection();
+        using var conn_gpsb = await _gpsb.CreateConnection();
         if (conn.State == ConnectionState.Closed) await conn.OpenAsync(cancellationToken);
+        if (conn_gpsb.State == ConnectionState.Closed) await conn_gpsb.OpenAsync(cancellationToken);
 
         _logger.LogInformation("Param received at {time}, param : {param}", DateTime.Now, JsonConvert.SerializeObject(param));
 
@@ -199,7 +201,7 @@ public class PrambananRunService
                 p.Add("@runid", run.RunId, DbType.String, ParameterDirection.Input);
                 p.Add("@carid", run.CarId, DbType.String, ParameterDirection.Input);
 
-                var cmd = new CommandDefinition("sp_posting_do_tms", p, commandType: CommandType.StoredProcedure, cancellationToken: cancellationToken);
+                var cmd = new CommandDefinition("sp_posting_do_tms", p, commandType: CommandType.StoredProcedure, cancellationToken: cancellationToken, commandTimeout: 60 * 30);
                 var fetch_do_post_param = await conn.QueryFirstOrDefaultAsync<string>(cmd) ?? throw new CreateRunsheetException("No data when preparing to integrate to TMS EasyGo. Internal server error");
                 var do_post_param = JsonConvert.DeserializeObject<ParamCreateDoByGeoCode>(fetch_do_post_param);
                 if (do_post_param.shipment is not null)
@@ -234,6 +236,18 @@ public class PrambananRunService
                         WHERE RunId = @runid AND CarID = @carid";
                 var cmd3 = new CommandDefinition(sql, new { runid = run.RunId, carid = run.CarId }, commandType: CommandType.Text, cancellationToken: cancellationToken);
                 var update_route_ispostdo_status = await conn.ExecuteAsync(cmd3);
+
+                // ** update tbl_order_header set is_do = 1
+                sql = @"SELECT TrxID, PL, PS FROM api_mst_trip WITH(NOLOCK)
+                        WHERE RunID = @runid";
+                var fetch_data_so = await conn.QueryAsync(new CommandDefinition(sql, new { runid = run.RunId }, cancellationToken: cancellationToken));
+
+                foreach (var so in fetch_data_so)
+                {
+                    sql = @"UPDATE tbl_order_header SET is_do = 1
+                            WHERE company_id = @company_id AND order_no = @order_no AND pl = @pl AND ps = @ps";
+                    await conn_gpsb.ExecuteAsync(new CommandDefinition(sql, new { company_id, order_no = (string)so.TrxID, pl = (string)so.pl, ps = (string)so.ps }, cancellationToken: cancellationToken));
+                }
 
                 list_do_id.Add(responseData.Data?.do_id ?? 0);
             }

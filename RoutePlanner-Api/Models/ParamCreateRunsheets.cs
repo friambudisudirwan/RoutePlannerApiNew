@@ -4,7 +4,7 @@ using System.Text.Json.Serialization;
 namespace RoutePlanner_Api.Models;
 
 /// <summary>Request body for creating generic planner runsheets.</summary>
-public class ParamCreateRunsheets
+public record ParamCreateRunsheets
 {
     /// <summary>Optional source system name.</summary>
     [JsonPropertyName("source_name")]

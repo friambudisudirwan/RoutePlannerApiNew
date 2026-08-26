@@ -68,15 +68,15 @@ builder.Services.AddHostedService(provider =>
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
+app.MapOpenApi();
+app.MapScalarApiReference(options =>
+{
+    options
+        .WithTitle("Route Planner API")
+        .WithDefaultHttpClient(ScalarTarget.CSharp, ScalarClient.HttpClient);
+});
 if (app.Environment.IsDevelopment())
 {
-    app.MapOpenApi();
-    app.MapScalarApiReference(options =>
-    {
-        options
-            .WithTitle("Route Planner API")
-            .WithDefaultHttpClient(ScalarTarget.CSharp, ScalarClient.HttpClient);
-    });
     app.UseDeveloperExceptionPage();
 }
 

@@ -1,7 +1,11 @@
+using System.Data;
 using System.Net;
+using System.Runtime.CompilerServices;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Data.SqlClient;
+using RoutePlanner_Api.Data;
 using RoutePlanner_Api.Dtos;
 using RoutePlanner_Api.Exceptions;
 using RoutePlanner_Api.Models;
@@ -17,7 +21,8 @@ namespace RoutePlanner_Api.Controllers
     public class PlannerController
     (
         ILogger<PlannerController> logger,
-        RunService runService
+        RunService runService,
+        VRPConnectionFactory vrp
     ) : ControllerBase
     {
         private readonly ILogger<PlannerController> _logger = logger;
@@ -55,7 +60,7 @@ namespace RoutePlanner_Api.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed when creating runsheet.");
-                return StatusCode((int)HttpStatusCode.InternalServerError, new { message = "Internal server error." });
+                return StatusCode((int)HttpStatusCode.InternalServerError, new { message = "Internal server error." + ex.Message });
             }
         }
 
@@ -106,6 +111,52 @@ namespace RoutePlanner_Api.Controllers
             {
                 _logger.LogError(ex, "Failed when creating runsheets. Internal server error. at {time}", DateTime.Now);
                 return StatusCode((int)HttpStatusCode.InternalServerError, new { message = "Internal server error." });
+            }
+        }
+
+        [HttpGet("Result")]
+        [EndpointSummary("Get route results")]
+        [EndpointDescription("Get list planned and calculated trips result")]
+        [ProducesResponseType(typeof(ResponseRouteResult), StatusCodes.Status200OK)]
+        [ProducesResponseType(typeof(MessageResponse), StatusCodes.Status404NotFound)]
+        [ProducesResponseType(typeof(MessageResponse), StatusCodes.Status500InternalServerError)]
+        public async Task<IActionResult> GetResults(string RunId, CancellationToken cancellationToken)
+        {
+            using var conn = vrp.CreateConnection();
+            if (conn.State == ConnectionState.Closed) await conn.OpenAsync(cancellationToken);
+
+            try
+            {
+                // get pool
+                var pool = await _runService.GetPool(RunId, conn, null, cancellationToken);
+                // get cars
+                var cars = await _runService.GetCars(RunId, conn, null, cancellationToken);
+                // get trips
+                var trips = await _runService.GetTrips(RunId, conn, null, cancellationToken);
+                // get trxroutes
+                var routed = await _runService.GetTrxRoutes(RunId, conn, null, cancellationToken);
+                // get trxroutedetails
+                var route_details = await _runService.GetTrxRouteDetails(RunId, conn, null, cancellationToken);
+
+                pool.Cars = cars;
+                pool.Trips = trips;
+
+                return StatusCode(StatusCodes.Status200OK, new ResponseRouteResult
+                {
+                    Pool = pool,
+                    Routes = [.. routed.Select(x => x with
+                    {
+                        RouteDetails = [.. route_details.Where(y => y.RouteNo == x.RouteNo).OrderBy(y => y.Seq)]
+                    })]
+                });
+            }
+            catch (CustomException ex)
+            {
+                return StatusCode(ex.status_code, new MessageResponse { Message = ex.Message });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(StatusCodes.Status500InternalServerError, new MessageResponse { Message = ex.Message });
             }
         }
     }
