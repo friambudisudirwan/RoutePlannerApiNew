@@ -3,9 +3,12 @@ using System.Text.Json.Serialization;
 
 namespace RoutePlanner_Api.Models;
 
-public class ApiMstTrip
+public record ApiMstTrip
 {
+    [JsonPropertyName("run_id")]
     public string? RunID { get; set; } = string.Empty;
+    
+    [JsonPropertyName("seq_no")]
     public int? SeqNo { get; set; }
 
     [JsonPropertyName("trip_id")]
@@ -13,6 +16,9 @@ public class ApiMstTrip
 
     [JsonPropertyName("trip_name")]
     public string? TripName { get; set; }
+
+    [JsonPropertyName("trip_address")]
+    public string? TripAddress { get; set; }
 
     [JsonPropertyName("lon")]
     public string? TripLong { get; set; }

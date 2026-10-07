@@ -40,7 +40,7 @@ public class RunService
     {
 
         using var conn = _vrp.CreateConnection();
-        // if (conn.State == ConnectionState.Closed) await conn.OpenAsync(cancellationToken);
+        if (conn.State == ConnectionState.Closed) await conn.OpenAsync(cancellationToken);
         using var trx = await conn.BeginTransactionAsync(cancellationToken);
 
         try
@@ -48,6 +48,7 @@ public class RunService
             var list_runid = new List<string>();
             var user_id = _userIdentity.GetUserId();
             var company_id = _userIdentity.GetCompanyId();
+            var current_datetime = DateTime.Now;
 
             foreach (var pool in param.Data)
             {
@@ -55,74 +56,76 @@ public class RunService
                 var run_id = await conn.QueryFirstOrDefaultAsync<string>(cmd_run_id) ?? throw new InvalidOperationException("Failed when generating RunID. Internal server error.");
 
                 // ** insert pool
-                var p = new DynamicParameters();
-                p.Add("@runid", run_id, DbType.String, ParameterDirection.Input);
-                p.Add("@poolid", pool.PoolID, DbType.String, ParameterDirection.Input);
-                p.Add("@poolname", pool.PoolName.Replace("'", "''"), DbType.String, ParameterDirection.Input);
-                p.Add("@starttime", pool.StartTime.ToString("yyyy-MM-dd HH:mm:ss"), DbType.String, ParameterDirection.Input);
-                p.Add("@startlong", pool.StartLong, DbType.String, ParameterDirection.Input);
-                p.Add("@startlat", pool.StartLat, DbType.String, ParameterDirection.Input);
-                p.Add("@maxtimeidle", pool.MaxTimeIdle, DbType.Int32, ParameterDirection.Input);
-                p.Add("@usrupd", user_id, DbType.String, ParameterDirection.Input);
-
-                var cmd = new CommandDefinition("sp_api_run_insert_pool", parameters: p, commandType: CommandType.StoredProcedure, transaction: trx, cancellationToken: cancellationToken);
-                if (await conn.ExecuteAsync(cmd) < 1) throw new InvalidOperationException($"Failed when saving pool for pool id: {pool.PoolID}.");
+                var sql = @"INSERT INTO api_mst_pool (RunID, PoolID, PoolName, StartTime, StartLong, StartLat, MaxTimeIdle, Usrupd, DtmUpd, SourceName)
+                            VALUES (@runid, @poolid, @poolname, @starttime, @startlong, @startlat, @maxtimeidle, @usrupd, @dtmupd, @sourcename)";
+                await conn.ExecuteAsync(new CommandDefinition
+                (
+                    sql,
+                    new
+                    {
+                        runid = run_id,
+                        poolid = pool.PoolID,
+                        poolname = pool.PoolName,
+                        starttime = pool.StartTime.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture),
+                        startlong = pool.StartLong,
+                        startlat = pool.StartLat,
+                        maxtimeidle = pool.MaxTimeIdle,
+                        usrupd = user_id,
+                        dtmupd = current_datetime.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture),
+                        sourcename = param.SourceName
+                    },
+                    transaction: trx,
+                    cancellationToken: cancellationToken
+                ));
 
                 // ** insert car
-                var seq_car = 1;
-                foreach (var car in pool.Cars)
+                sql = @"INSERT INTO api_mst_car (RunID, SeqNo, CarID, CarDesc, PoliceNo, Capacity, WorkingTime, MinRestTime, RestTime, UsrUpd, DtmUpd)
+                            VALUES (@runid, @seqno, @carid, @cardesc, @policeno, @capacity, @workingtime, @minresttime, @resttime, @usrupd, @dtmupd)";
+                await conn.ExecuteAsync(new CommandDefinition(sql, pool.Cars.Select((x, i) => new
                 {
-                    var p_car = new DynamicParameters();
-                    p_car.Add("@runid", run_id, DbType.String, ParameterDirection.Input);
-                    p_car.Add("@seqno", seq_car, DbType.Int32, ParameterDirection.Input);
-                    p_car.Add("@carid", car.CarID, DbType.String, ParameterDirection.Input);
-                    p_car.Add("@cardesc", car.CarDesc, DbType.String, ParameterDirection.Input);
-                    p_car.Add("@policeno", car.PoliceNo, DbType.String, ParameterDirection.Input);
-                    p_car.Add("@capacity", car.Capacity, DbType.String, ParameterDirection.Input);
-                    p_car.Add("@workingmin", car.WorkingTime.ToString(), DbType.String, ParameterDirection.Input);
-                    p_car.Add("@minresttime", $"{pool.StartTime:yyyy-MM-dd} {car.MinRestTime}", DbType.String, ParameterDirection.Input);
-                    p_car.Add("@resttime", car.RestTime, DbType.Int32, ParameterDirection.Input);
-                    p_car.Add("@usrupd", user_id, DbType.String, ParameterDirection.Input);
-
-                    var cmd_car = new CommandDefinition("sp_api_run_insert_car", parameters: p_car, commandType: CommandType.StoredProcedure, transaction: trx, cancellationToken: cancellationToken);
-                    if (await conn.ExecuteAsync(cmd_car) < 1) throw new InvalidOperationException($"Failed when saving car for pool id: {pool.PoolID}, car id: {car.CarID}");
-
-                    seq_car++;
-                }
+                    runid = run_id,
+                    seqno = i + 1,
+                    carid = x.CarID,
+                    cardesc = x.CarDesc,
+                    policeno = x.PoliceNo,
+                    capacity = x.Capacity,
+                    workingtime = x.WorkingTime,
+                    MinRestTime = $"{pool.StartTime.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)} {x.MinRestTime}",
+                    resttime = x.RestTime,
+                    usrupd = user_id,
+                    dtmupd = current_datetime
+                }), transaction: trx, cancellationToken: cancellationToken));
 
                 // ** insert trip
-                var seq_trip = 1;
-                foreach (var trip in pool.Trips)
+                sql = @"INSERT INTO api_mst_trip (RunID, SeqNo, TripID, TripName, TripAddress, TripLong, TripLat, TimeOpen, TimeClose, TimeWait, TimeOperation,
+                                                  Capacity, Balance, LayananID, TripType, MetodeHitung, Siklus, TrxID, ZoneCode, RegionCode, UsrUpd, DtmUpd)
+                        VALUES (@runid, @seqno, @tripid, @tripname, @tripaddress, @triplong, @triplat, @timeopen, @timeclose, @timewait, @timeoperation,
+                                @capacity, @balance, @layananid, @triptype, @metodehitung, @siklus, @trxid, @zonecode, @regioncode, @usrupd, @dtmupd)";
+                await conn.ExecuteAsync(new CommandDefinition(sql, pool.Trips.Select((x, i) => new
                 {
-                    var p_trip = new DynamicParameters();
-                    p_trip.Add("@runid", run_id, DbType.String, ParameterDirection.Input);
-                    p_trip.Add("@seqno", seq_trip, DbType.Int32, ParameterDirection.Input);
-                    p_trip.Add("@tripid", trip.TripId, DbType.String, ParameterDirection.Input);
-                    p_trip.Add("@tripname", trip.TripName, DbType.String, ParameterDirection.Input);
-                    p_trip.Add("@trip_long", trip.TripLong, DbType.String, ParameterDirection.Input);
-                    p_trip.Add("@trip_lat", trip.TripLat, DbType.String, ParameterDirection.Input);
-                    p_trip.Add("@time_open", $"{pool.StartTime:yyyy-MM-dd} {trip.TimeOpen}", DbType.String, ParameterDirection.Input);
-                    p_trip.Add("@time_close", $"{pool.StartTime:yyyy-MM-dd} {trip.TimeClose}", DbType.String, ParameterDirection.Input);
-                    p_trip.Add("@time_wait", trip.TimeWait, DbType.Int32, ParameterDirection.Input);
-                    p_trip.Add("@time_operation", trip.TimeOperation, DbType.Int32, ParameterDirection.Input);
-                    p_trip.Add("@capacity", trip.Capacity, DbType.Double, ParameterDirection.Input);
-                    p_trip.Add("@balance", trip.Balance, DbType.Double, ParameterDirection.Input);
-                    p_trip.Add("@layananid", trip.LayananID, DbType.String, ParameterDirection.Input);
-                    p_trip.Add("@TripType", trip.TripType, DbType.String, ParameterDirection.Input);
-                    p_trip.Add("@MetodeHitung", trip.MetodeHitung, DbType.String, ParameterDirection.Input);
-                    p_trip.Add("@Siklus", trip.Siklus, DbType.String, ParameterDirection.Input);
-                    p_trip.Add("@TrxID", trip.TrxID, DbType.String, ParameterDirection.Input);
-                    p_trip.Add("@ZoneCode", trip.ZoneCode, DbType.String, ParameterDirection.Input);
-                    p_trip.Add("@RegionCode", trip.RegionCode, DbType.String, ParameterDirection.Input);
-                    p_trip.Add("@is_dv", 0, DbType.Int32, ParameterDirection.Input);
-                    p_trip.Add("@parentid", "", DbType.String, ParameterDirection.Input);
-                    p_trip.Add("@usrupd", user_id, DbType.String, ParameterDirection.Input);
-
-                    var cmd_trip = new CommandDefinition("sp_api_run_insert_trip", parameters: p_trip, commandType: CommandType.StoredProcedure, transaction: trx, cancellationToken: cancellationToken);
-                    if (await conn.ExecuteAsync(cmd_trip) < 1) throw new InvalidOperationException($"Failed when saving trip for pool id: {pool.PoolID}, trip id: {trip.TripId}");
-
-                    seq_trip++;
-                }
+                    runid = run_id,
+                    seqno = i + 1,
+                    tripid = x.TripId,
+                    tripname = x.TripName,
+                    tripaddress = x.TripAddress,
+                    triplong = x.TripLong,
+                    triplat = x.TripLat,
+                    timeopen = $"{pool.StartTime.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)} {x.TimeOpen}",
+                    timeclose = $"{pool.StartTime.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)} {x.TimeClose}",
+                    timewait = x.TimeWait,
+                    timeoperation = x.TimeOperation,
+                    capacity = x.Capacity,
+                    balance = x.Balance,
+                    layananid = x.LayananID,
+                    triptype = x.TripType,
+                    metodehitung = x.MetodeHitung,
+                    siklus = x.Siklus,
+                    trxid = x.TrxID,
+                    zonecode = x.ZoneCode,
+                    regioncode = x.RegionCode,
+                    usrupd = user_id,
+                    dtmupd = current_datetime
+                }), transaction: trx, cancellationToken: cancellationToken));
 
                 var cmd_queue = new CommandDefinition(@"UPDATE api_mst_pool SET InQueue = 1 WHERE RunID = @runid", new { runid = run_id }, transaction: trx, cancellationToken: cancellationToken);
                 await conn.ExecuteAsync(cmd_queue);
@@ -448,15 +451,15 @@ public class RunService
         }
     }
 
-    private static async Task<ApiMstPool> GetPool
+    public async Task<ApiMstPool> GetPool
     (
         string runid,
         DbConnection conn,
-        DbTransaction trx,
+        DbTransaction? trx,
         CancellationToken cancellationToken
     )
     {
-        var sql = @"SELECT TOP 1 PoolID, PoolName, StartTime, StartLong, StartLat 
+        var sql = @"SELECT TOP 1 RunID, PoolID, PoolName, StartTime, StartLong, StartLat, InQueue, InProcess, IsFailed, SourceName
                     FROM api_mst_pool WITH(NOLOCK)
                     WHERE RunID = @runid";
         var pool = await conn.QueryFirstOrDefaultAsync<ApiMstPool>(new CommandDefinition
@@ -466,11 +469,11 @@ public class RunService
         return pool;
     }
 
-    private static async Task<List<ApiMstTrip>> GetTrips
+    public async Task<List<ApiMstTrip>> GetTrips
     (
         string runid,
         DbConnection conn,
-        DbTransaction trx,
+        DbTransaction? trx,
         CancellationToken cancellationToken
     )
     {
@@ -485,6 +488,68 @@ public class RunService
         ));
 
         return [.. trips];
+    }
+
+    public async Task<List<ApiMstCar>> GetCars
+    (
+        string RunId,
+        DbConnection conn,
+        DbTransaction? trx,
+        CancellationToken cancellationToken
+    )
+    {
+        const string sql = @"SELECT SeqNo, CarID, CarDesc, PoliceNo, Capacity,
+                                    WorkingTime, MinRestTime, RestTime
+                             FROM api_mst_car WITH(NOLOCK)
+                             WHERE RunID = @runid";
+        var cars = await conn.QueryAsync<ApiMstCar>(new CommandDefinition
+        (sql, new { runid = RunId }, transaction: trx, cancellationToken: cancellationToken));
+
+        return [.. cars];
+    }
+
+    public async Task<List<ApiTrxRoute>> GetTrxRoutes
+    (
+        string runid,
+        DbConnection conn,
+        DbTransaction? trx,
+        CancellationToken cancellationToken
+    )
+    {
+        const string sql = @"SELECT RunId, RouteNo, CarID, CapacityStart, WorkingTimeStart,
+                                    StartID, StartName, StartLong, StartLat, EndSeq,
+                                    EndID, EndName, EndLong, EndLat,
+                                    TimeOpen, TimeClose, MaxTimeIdle, StartTime, Duration,
+                                    ArrivalTime, IdleTime, TimeWait, StartOperationTime,
+                                    TimeOperation, TimeRest, EndTime, WorkingTimeEnd,
+                                    CapacityUse, CapacityEnd, Distance
+                              FROM api_trx_route WITH(NOLOCK)
+                              WHERE RunID = @runid";
+        var trxdata = await conn.QueryAsync<ApiTrxRoute>(new CommandDefinition
+        (
+            sql, new { runid }, transaction: trx, cancellationToken: cancellationToken
+        ));
+
+        return [.. trxdata];
+    }
+
+    public async Task<List<ApiTrxRouteDetail>> GetTrxRouteDetails
+    (
+        string runid,
+        DbConnection conn,
+        DbTransaction? trx,
+        CancellationToken cancellationToken
+    )
+    {
+        const string sql = @"SELECT RunID, RouteNo, Seq, lon, lat
+                              FROM api_trx_route_detail WITH(NOLOCK)
+                              WHERE RunID = @runid";
+        var trxdetaildata = await conn.QueryAsync<ApiTrxRouteDetail>(new CommandDefinition
+        (
+            sql, new { runid }, transaction: trx, cancellationToken: cancellationToken
+        ));
+
+        return [.. trxdetaildata];
     }
 
     private static bool IsValidLongLat(string input)

@@ -3,8 +3,9 @@ using System.Text.Json.Serialization;
 
 namespace RoutePlanner_Api.Models;
 
-public class ApiMstPool
+public record ApiMstPool
 {
+    [JsonPropertyName("run_id")]
     public string? RunID { get; set; } = string.Empty;
 
     [JsonPropertyName("pool_id")]
@@ -25,9 +26,19 @@ public class ApiMstPool
     [JsonPropertyName("max_time_idle")]
     public int MaxTimeIdle { get; set; }
 
+    [JsonPropertyName("in_queue")]
+    public int InQueue { get; set; }
+
+    [JsonPropertyName("in_process")]
+    public int InProcess { get; set; }
+
+    [JsonPropertyName("is_failed")]
+    public int IsFailed { get; set; }
+
     [JsonPropertyName("cars")]
     public List<ApiMstCar> Cars { get; set; } = [];
     
     [JsonPropertyName("trips")]
     public List<ApiMstTrip> Trips { get; set; } = [];
+
 }
