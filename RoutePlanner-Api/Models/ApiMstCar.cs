@@ -3,7 +3,7 @@ using System.Text.Json.Serialization;
 
 namespace RoutePlanner_Api.Models;
 
-public class ApiMstCar
+public record ApiMstCar
 {
     public string? RunID { get; set; } = string.Empty;
     public int? SeqNo { get; set; }
