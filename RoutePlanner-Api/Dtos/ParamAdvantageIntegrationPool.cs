@@ -1,5 +1,4 @@
-using System;
-using System.Text.Json.Serialization;
+using Newtonsoft.Json;
 
 namespace RoutePlanner_Api.Dtos;
 
@@ -9,9 +8,9 @@ public class ParamAdvantageIntegrationPool
     public string? poolID { get; set; }
     public string? poolName { get; set; }
     public string? startTime { get; set; }
-    [JsonPropertyName("long")]
+    [JsonProperty("long")]
     public string? Long { get; set; }
-    [JsonPropertyName("lat")]
+    [JsonProperty("lat")]
     public string? Lat { get; set; }
     public int maxTimeIdle { get; set; }
     public string? description { get; set; }

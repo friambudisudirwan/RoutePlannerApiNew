@@ -9,6 +9,7 @@ using RoutePlanner_Api.Exceptions;
 using RoutePlanner_Api.Validator;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.Data.SqlClient;
+using System.Globalization;
 
 namespace RoutePlanner_Api.Services;
 
@@ -20,7 +21,8 @@ public class PrambananRunService
     VRPConnectionFactory vrp,
     GPSBConnectionFactory gpsb,
     PrambananValidator validator,
-    UserIdentityService userIdentity
+    UserIdentityService userIdentity,
+    RunsheetIntegrateGuard integrateGuard
 )
 {
     private readonly ILogger<RunService> _logger = logger;
@@ -30,6 +32,7 @@ public class PrambananRunService
     private readonly dynamic _brokerConfig = config.GetSection("RabbitMQConfig");
     private readonly UserIdentityService _userIdentity = userIdentity;
     private readonly PrambananValidator _validator = validator;
+    private readonly RunsheetIntegrateGuard _integrateGuard = integrateGuard;
     private readonly string _vtsApiUrl = config.GetSection("Configs")["VtsApiUrl"] ?? throw new ArgumentNullException("Vts Api Url is empty");
 
     public async Task<List<string>> CreatePrambananManualRunsheets(ParamCreateRunsheetPrambanan param, CancellationToken cancellationToken)
@@ -70,16 +73,28 @@ public class PrambananRunService
                 cancellationToken: cancellationToken
             );
 
-            // ** run calculate loop
-            await CalculateRouteLoop(user_id ?? "", current_date_time, conn, cancellationToken);
-
-            // ** hit polyline service per runid
             foreach (var runid in list_runid)
             {
-                await _brokerServie.PublishMessage(
-                    exchange: _brokerConfig["PolylineExchangeName"],
-                    routing_key: _brokerConfig["PolylineRoutingKey"],
-                    message: JsonConvert.SerializeObject(new { runid, userid = user_id })
+                var cmd_queue = new CommandDefinition(@"UPDATE api_mst_pool SET InQueue = 1 WHERE RunID = @runid", new { runid }, cancellationToken: cancellationToken);
+                await conn.ExecuteAsync(cmd_queue);
+            }
+
+            if (list_runid.Count > 0)
+            {
+                string? manualRoutingKey = _brokerConfig["ManualRoutingKey"];
+                if (string.IsNullOrWhiteSpace(manualRoutingKey))
+                    throw new InvalidOperationException("RabbitMQConfig:ManualRoutingKey is not configured");
+
+                await _brokerServie.PublishMessage
+                (
+                    exchange: _brokerConfig["ExchangeName"],
+                    routing_key: manualRoutingKey,
+                    message: JsonConvert.SerializeObject(new
+                    {
+                        userid = user_id,
+                        dtmupd = current_date_time.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture),
+                        runids = list_runid
+                    })
                 );
             }
 
@@ -137,6 +152,12 @@ public class PrambananRunService
             // ** delete apabila ada so yang nggak dapet runid (meskipun ngga mungkin)
             await DeleteTripWithNoRunIDByTime(user_id ?? "", current_date_time, conn, cancellationToken);
 
+            foreach (var runid in list_runid)
+            {
+                var cmd_queue = new CommandDefinition(@"UPDATE api_mst_pool SET InQueue = 1 WHERE RunID = @runid", new { runid }, cancellationToken: cancellationToken);
+                await conn.ExecuteAsync(cmd_queue);
+            }
+
             // ** hit broker rabbitmq buat jalanin background service
             await _brokerServie.PublishMessage
             (
@@ -161,8 +182,11 @@ public class PrambananRunService
         }
     }
 
-    public async Task<List<long>> IntegrateRunsheets(ParamIntegrateRunsheets param, CancellationToken cancellationToken)
+    public async Task<IntegrateRunsheetsResult> IntegrateRunsheets(ParamIntegrateRunsheets param, CancellationToken cancellationToken)
     {
+        if (param.data is null || param.data.Count == 0)
+            throw new CustomException("Tidak ada data kendaraan untuk diintegrasikan.", StatusCodes.Status422UnprocessableEntity);
+
         using var conn = _vrp.CreateConnection();
         using var conn_gpsb = await _gpsb.CreateConnection();
         if (conn.State == ConnectionState.Closed) await conn.OpenAsync(cancellationToken);
@@ -170,103 +194,118 @@ public class PrambananRunService
 
         _logger.LogInformation("Param received at {time}, param : {param}", DateTime.Now, JsonConvert.SerializeObject(param));
 
-        try
+        var company_id = _userIdentity.GetCompanyId();
+        var user_id = _userIdentity.GetUserId();
+        var token_h2h = await _userIdentity.GetTokenH2H(cancellationToken);
+
+        foreach (var runid in param.data.Select(x => x.RunId).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct())
+            await _integrateGuard.EnsureReadyAsync(runid, cancellationToken);
+
+        var result = new IntegrateRunsheetsResult();
+
+        foreach (var run in param.data)
         {
-            var company_id = _userIdentity.GetCompanyId();
-            var user_id = _userIdentity.GetUserId();
-            var token_h2h = await _userIdentity.GetTokenH2H(cancellationToken);
-
-            var list_do_id = new List<long>();
-
-            foreach (var run in param.data)
+            try
             {
-                // ** cek apakah dari run dan car sudah ke-route
-                var sql = @"SELECT TOP 1 RunID FROM api_trx_route WITH(NOLOCK)
-                            WHERE runid = @runid AND carid = @carid AND UsrUpd = @user_id";
-                var cmd_check = new CommandDefinition(sql, new { runid = run.RunId, carid = run.CarId, user_id }, commandType: CommandType.Text, cancellationToken: cancellationToken);
-                var validate_route = await conn.QueryFirstOrDefaultAsync<string>(cmd_check);
-
-                if (string.IsNullOrEmpty(validate_route)) throw new CreateRunsheetException("Route mobil tidak ditemukan.");
-
-                // ** cek apakah route sudah terintegrasi
-                sql = @"SELECT TOP 1 RunID FROM api_trx_route WITH(NOLOCK)
-                        WHERE runid = @runid AND carid = @carid AND UsrUpd = @user_id AND ISNULL(IsPostDO, 0) = 1";
-                var cmd_check2 = new CommandDefinition(sql, new { runid = run.RunId, carid = run.CarId, user_id }, commandType: CommandType.Text, cancellationToken: cancellationToken);
-                var validate_route2 = await conn.QueryFirstOrDefaultAsync<string>(cmd_check2);
-
-                if (!string.IsNullOrEmpty(validate_route2)) throw new CreateRunsheetException("Route mobil sudah pernah diintegrasikan ke TMS EasyGo.");
-
-                // ** begin post do
-                var p = new DynamicParameters();
-                p.Add("@runid", run.RunId, DbType.String, ParameterDirection.Input);
-                p.Add("@carid", run.CarId, DbType.String, ParameterDirection.Input);
-
-                var cmd = new CommandDefinition("sp_posting_do_tms", p, commandType: CommandType.StoredProcedure, cancellationToken: cancellationToken, commandTimeout: 60 * 30);
-                var fetch_do_post_param = await conn.QueryFirstOrDefaultAsync<string>(cmd) ?? throw new CreateRunsheetException("No data when preparing to integrate to TMS EasyGo. Internal server error");
-                var do_post_param = JsonConvert.DeserializeObject<ParamCreateDoByGeoCode>(fetch_do_post_param);
-                if (do_post_param.shipment is not null)
-                {
-                    do_post_param.alert_email = "transport1.ndc@prb.co.id;transport2.ndc@prb.co.id;transport3.ndc@prb.co.id;transport4.ndc@prb.co.id;transport1.edc@prb.co.id;transport2.edc@prb.co.id;transport3.3dc@prb.co.id;saefudin@prb.co.id;j.prasetyo@prb.co.id;s.arifin@prb.co.id";
-                }
-
-                // **hit vts api create do by code
-                var client = new RestClient(_vtsApiUrl);
-                var request = new RestRequest("/api/prambanan/AddOrUpdateDOV1ByGeoCode", Method.Post);
-
-                // Header Token
-                request.AddHeader("Content-Type", "application/json");
-                request.AddHeader("Token", token_h2h);
-
-                var request_body = JsonConvert.SerializeObject(do_post_param);
-                request.AddParameter(
-                    "application/json",
-                    request_body,
-                    ParameterType.RequestBody
-                );
-
-                var response = await client.ExecuteAsync(request, cancellationToken);
-
-                if (!response.IsSuccessStatusCode) throw new InvalidOperationException(response.ErrorMessage);
-
-                var responseData = JsonConvert.DeserializeObject<VtsApiResponseBase<DoIdData>>(response.Content ?? "") ?? throw new InvalidOperationException("Failed when integrating to TMS EasyGO");
-                if (responseData.ResponseCode != 1) throw new CreateRunsheetException(responseData?.ResponseMessage ?? "");
-
-                // ** update route to IsPostDo = 1
-                sql = @"UPDATE api_trx_route SET IsPostDO = 1
-                        WHERE RunId = @runid AND CarID = @carid";
-                var cmd3 = new CommandDefinition(sql, new { runid = run.RunId, carid = run.CarId }, commandType: CommandType.Text, cancellationToken: cancellationToken);
-                var update_route_ispostdo_status = await conn.ExecuteAsync(cmd3);
-
-                // ** update tbl_order_header set is_do = 1
-                sql = @"SELECT TrxID, PL, PS FROM api_mst_trip WITH(NOLOCK)
-                        WHERE RunID = @runid";
-                var fetch_data_so = await conn.QueryAsync(new CommandDefinition(sql, new { runid = run.RunId }, cancellationToken: cancellationToken));
-
-                foreach (var so in fetch_data_so)
-                {
-                    sql = @"UPDATE tbl_order_header SET is_do = 1
-                            WHERE company_id = @company_id AND order_no = @order_no AND pl = @pl AND ps = @ps";
-                    await conn_gpsb.ExecuteAsync(new CommandDefinition(sql, new { company_id, order_no = (string)so.TrxID, pl = (string)so.pl, ps = (string)so.ps }, cancellationToken: cancellationToken));
-                }
-
-                list_do_id.Add(responseData.Data?.do_id ?? 0);
+                var do_id = await IntegrateVehicleAsync(
+                    company_id,
+                    user_id,
+                    token_h2h,
+                    run,
+                    conn,
+                    conn_gpsb,
+                    cancellationToken);
+                if (do_id > 0) result.DoIds.Add(do_id);
+                result.SuccessCarIds.Add(run.CarId);
             }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed integrating Prambanan {RunId} / {CarId}", run.RunId, run.CarId);
+                result.Errors.Add(new IntegrateCarErrorItem
+                {
+                    CarId = run.CarId,
+                    Message = string.IsNullOrWhiteSpace(ex.Message) ? "Internal server error" : ex.Message
+                });
+            }
+        }
 
-            // **commit trx
-            return [.. list_do_id.Where(x => x > 0)];
-        }
-        catch (InvalidOperationException)
+        return result;
+    }
+
+    private async Task<long> IntegrateVehicleAsync
+    (
+        int company_id,
+        string user_id,
+        string token_h2h,
+        ParamTrxRoute run,
+        DbConnection conn,
+        DbConnection conn_gpsb,
+        CancellationToken cancellationToken
+    )
+    {
+        var sql = @"SELECT TOP 1 RunID FROM api_trx_route WITH(NOLOCK)
+                    WHERE runid = @runid AND carid = @carid AND UsrUpd = @user_id";
+        var validate_route = await conn.QueryFirstOrDefaultAsync<string>(new CommandDefinition(
+            sql, new { runid = run.RunId, carid = run.CarId, user_id }, cancellationToken: cancellationToken));
+
+        if (string.IsNullOrEmpty(validate_route))
+            throw new CreateRunsheetException("Route mobil tidak ditemukan.");
+
+        sql = @"SELECT TOP 1 RunID FROM api_trx_route WITH(NOLOCK)
+                WHERE runid = @runid AND carid = @carid AND UsrUpd = @user_id AND ISNULL(IsPostDO, 0) = 1";
+        var validate_route2 = await conn.QueryFirstOrDefaultAsync<string>(new CommandDefinition(
+            sql, new { runid = run.RunId, carid = run.CarId, user_id }, cancellationToken: cancellationToken));
+
+        if (!string.IsNullOrEmpty(validate_route2))
+            throw new CreateRunsheetException("Route mobil sudah pernah diintegrasikan ke TMS EasyGo.");
+
+        var p = new DynamicParameters();
+        p.Add("@runid", run.RunId, DbType.String, ParameterDirection.Input);
+        p.Add("@carid", run.CarId, DbType.String, ParameterDirection.Input);
+
+        var cmd = new CommandDefinition("sp_posting_do_tms", p, commandType: CommandType.StoredProcedure, cancellationToken: cancellationToken, commandTimeout: 60 * 30);
+        var fetch_do_post_param = await conn.QueryFirstOrDefaultAsync<string>(cmd)
+            ?? throw new CreateRunsheetException("No data when preparing to integrate to TMS EasyGo. Internal server error");
+        var do_post_param = JsonConvert.DeserializeObject<ParamCreateDoByGeoCode>(fetch_do_post_param);
+        if (do_post_param.shipment is not null)
         {
-            throw;
+            do_post_param.alert_email = "transport1.ndc@prb.co.id;transport2.ndc@prb.co.id;transport3.ndc@prb.co.id;transport4.ndc@prb.co.id;transport1.edc@prb.co.id;transport2.edc@prb.co.id;transport3.3dc@prb.co.id;saefudin@prb.co.id;j.prasetyo@prb.co.id;s.arifin@prb.co.id";
         }
-        catch (CreateRunsheetException)
+
+        var client = new RestClient(_vtsApiUrl);
+        var request = new RestRequest("/api/prambanan/AddOrUpdateDOV1ByGeoCode", Method.Post);
+        request.AddHeader("Content-Type", "application/json");
+        request.AddHeader("Token", token_h2h);
+        request.AddParameter("application/json", JsonConvert.SerializeObject(do_post_param), ParameterType.RequestBody);
+
+        var response = await client.ExecuteAsync(request, cancellationToken);
+        if (!response.IsSuccessStatusCode) throw new InvalidOperationException(response.ErrorMessage);
+
+        var responseData = JsonConvert.DeserializeObject<VtsApiResponseBase<DoIdData>>(response.Content ?? "")
+            ?? throw new InvalidOperationException("Failed when integrating to TMS EasyGO");
+        if (responseData.ResponseCode != 1)
+            throw new CreateRunsheetException(responseData?.ResponseMessage ?? "");
+
+        sql = @"UPDATE api_trx_route SET IsPostDO = 1
+                WHERE RunId = @runid AND CarID = @carid";
+        await conn.ExecuteAsync(new CommandDefinition(
+            sql, new { runid = run.RunId, carid = run.CarId }, cancellationToken: cancellationToken));
+
+        sql = @"SELECT TrxID, PL, PS FROM api_mst_trip WITH(NOLOCK)
+                WHERE RunID = @runid";
+        var fetch_data_so = await conn.QueryAsync(new CommandDefinition(sql, new { runid = run.RunId }, cancellationToken: cancellationToken));
+
+        foreach (var so in fetch_data_so)
         {
-            throw;
+            sql = @"UPDATE tbl_order_header SET is_do = 1
+                    WHERE company_id = @company_id AND order_no = @order_no AND pl = @pl AND ps = @ps";
+            await conn_gpsb.ExecuteAsync(new CommandDefinition(
+                sql,
+                new { company_id, order_no = (string)so.TrxID, pl = (string)so.pl, ps = (string)so.ps },
+                cancellationToken: cancellationToken));
         }
-        catch (Exception)
-        {
-            throw;
-        }
+
+        return responseData.Data?.do_id ?? 0;
     }
 
     public async Task UpdatePS(ParamUpdatePS param, CancellationToken cancellationToken)
@@ -403,22 +442,6 @@ public class PrambananRunService
         await conn.ExecuteAsync(cmd);
     }
 
-    private static async Task CalculateRouteLoop
-    (
-        string user_id,
-        DateTime current_date_time,
-        DbConnection conn,
-        CancellationToken cancellationToken
-    )
-    {
-        var p = new DynamicParameters();
-        p.Add("@dtmupd", current_date_time, DbType.DateTime, ParameterDirection.Input);
-        p.Add("@usrupd", user_id, DbType.String, ParameterDirection.Input);
-
-        var cmd_prerun = new CommandDefinition("sp_run_prambanan_calc_loop", p, commandType: CommandType.StoredProcedure, cancellationToken: cancellationToken, commandTimeout: 60 * 60);
-        await conn.ExecuteAsync(cmd_prerun);
-    }
-
     private static async Task<List<string>> PrerunPrambananTripsManual
     (
         int company_id,
@@ -437,13 +460,13 @@ public class PrambananRunService
         p.Add("@start_time", start_time, DbType.DateTime, ParameterDirection.Input);
         p.Add("@source_name", source_name, DbType.String, ParameterDirection.Input);
 
-        var cmd_prerun = new CommandDefinition("sp_prerun_prambanan_manual", p, commandType: CommandType.StoredProcedure, cancellationToken: cancellationToken, commandTimeout: 60 * 30);
+        var cmd_prerun = new CommandDefinition("sp_prerun_prambanan_manual", p, commandType: CommandType.StoredProcedure, cancellationToken: cancellationToken, commandTimeout: 60 * 60);
         await conn.ExecuteAsync(cmd_prerun);
 
         var sql = @"SELECT runid FROM api_mst_trip WITH(NOLOCK)
                     WHERE usrupd = @user_id AND dtmupd = @current_date_time AND runid != ''
                     GROUP BY runid";
-        var cmd2 = new CommandDefinition(sql, new { user_id, current_date_time }, commandType: CommandType.Text, cancellationToken: cancellationToken, commandTimeout: 60 * 30);
+        var cmd2 = new CommandDefinition(sql, new { user_id, current_date_time }, commandType: CommandType.Text, cancellationToken: cancellationToken, commandTimeout: 60 * 60);
         var list_runid = await conn.QueryAsync<string>(cmd2);
 
         return [.. list_runid];

@@ -44,7 +44,7 @@ public class DoIdItem
     public string DoId { get; set; } = string.Empty;
 }
 
-/// <summary>Integrate runsheets success response.</summary>
+/// <summary>Integrate runsheets success / partial-success response.</summary>
 public class IntegrateRunsheetsResponse
 {
     [JsonPropertyName("message")]
@@ -52,6 +52,9 @@ public class IntegrateRunsheetsResponse
 
     [JsonPropertyName("data")]
     public List<DoIdItem> Data { get; set; } = [];
+
+    [JsonPropertyName("error_data")]
+    public List<IntegrateCarErrorItem> ErrorData { get; set; } = [];
 }
 
 /// <summary>Prambanan SO validation error (duplicate SO / invalid coordinates).</summary>

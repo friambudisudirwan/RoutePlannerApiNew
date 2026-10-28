@@ -33,12 +33,14 @@ namespace RoutePlanner_Api.Controllers
         /// <param name="cancellationToken">Cancellation token.</param>
         /// <response code="201">Runsheets created; returns list of RunID.</response>
         /// <response code="409">Business conflict while creating runsheets.</response>
+        /// <response code="422">Payload cannot be processed (duplicate nopol).</response>
         /// <response code="500">Unexpected server error.</response>
         [HttpPost("CreateRunsheets")]
         [EndpointSummary("Create runsheets")]
         [EndpointDescription("Creates runsheets from the provided pool, cars, and trips payload.")]
         [ProducesResponseType(typeof(CreateRunsheetsResponse), StatusCodes.Status201Created)]
         [ProducesResponseType(typeof(MessageResponse), StatusCodes.Status409Conflict)]
+        [ProducesResponseType(typeof(MessageResponse), StatusCodes.Status422UnprocessableEntity)]
         [ProducesResponseType(typeof(MessageResponse), StatusCodes.Status500InternalServerError)]
         public async Task<IActionResult> CreateRunsheets(ParamCreateRunsheets param, CancellationToken cancellationToken)
         {
@@ -51,6 +53,11 @@ namespace RoutePlanner_Api.Controllers
                     message = "Success",
                     data = list_runid.Select(x => new { RunID = x })
                 });
+            }
+            catch (CustomException ex)
+            {
+                _logger.LogWarning(ex, "Failed when creating runsheet.");
+                return StatusCode(ex.status_code, new { message = ex.Message });
             }
             catch (CreateRunsheetException ex)
             {
@@ -80,22 +87,14 @@ namespace RoutePlanner_Api.Controllers
         {
             try
             {
-                // ** hit post do
-                var list_do_id = await _runService.IntegrateRunsheets(param, cancellationToken);
-
-                return StatusCode((int)HttpStatusCode.Created, new
-                {
-                    message = "Runsheets berhasil diintegrasikan ke TMS EasyGO.",
-                    data = list_do_id.Select(x => new
-                    {
-                        do_id = x
-                    })
-                });
+                var result = await _runService.IntegrateRunsheets(param, cancellationToken);
+                var (status, body) = result.ToHttpResponse();
+                return StatusCode(status, body);
             }
             catch (CustomException ex)
             {
-                _logger.LogError(ex.Message);
-                return StatusCode(ex.status_code, ex.Message);
+                _logger.LogWarning(ex, "Failed when integrating runsheets.");
+                return StatusCode(ex.status_code, new { message = ex.Message });
             }
             catch (InvalidOperationException ex)
             {

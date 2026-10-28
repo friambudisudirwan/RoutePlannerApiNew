@@ -23,7 +23,9 @@ public class RunService
     GPSBConnectionFactory gpsb,
     GPSBService gpsb_service,
     IntegrateService integrate_service,
-    UserIdentityService userIdentity
+    UserIdentityService userIdentity,
+    RunsheetIntegrateGuard integrateGuard,
+    AdvantageCallbackService advantageCallback
 )
 {
     private readonly ILogger<RunService> _logger = logger;
@@ -34,6 +36,8 @@ public class RunService
     private readonly IntegrateService _integrate_service = integrate_service;
     private readonly dynamic _brokerConfig = config.GetSection("RabbitMQConfig");
     private readonly UserIdentityService _userIdentity = userIdentity;
+    private readonly RunsheetIntegrateGuard _integrateGuard = integrateGuard;
+    private readonly AdvantageCallbackService _advantageCallback = advantageCallback;
     private readonly string _vtsApiUrl = config.GetSection("Configs")["VtsApiUrl"] ?? throw new ArgumentNullException("Vts Api Url is empty");
 
     public async Task<List<string>> CreateRunsheets(ParamCreateRunsheets param, CancellationToken cancellationToken)
@@ -52,6 +56,19 @@ public class RunService
 
             foreach (var pool in param.Data)
             {
+                var duplicatePlates = (pool.Cars ?? [])
+                    .Select(x => x.PoliceNo?.Trim())
+                    .Where(x => !string.IsNullOrWhiteSpace(x))
+                    .GroupBy(x => x, StringComparer.OrdinalIgnoreCase)
+                    .Where(g => g.Count() > 1)
+                    .Select(g => g.Key!)
+                    .ToList();
+
+                if (duplicatePlates.Count > 0)
+                    throw new CustomException(
+                        $"Nopol duplikat pada pool {pool.PoolID}: {string.Join(", ", duplicatePlates)}",
+                        StatusCodes.Status422UnprocessableEntity);
+
                 var cmd_run_id = new CommandDefinition("sp_get_runid", commandType: CommandType.StoredProcedure, transaction: trx, cancellationToken: cancellationToken);
                 var run_id = await conn.QueryFirstOrDefaultAsync<string>(cmd_run_id) ?? throw new InvalidOperationException("Failed when generating RunID. Internal server error.");
 
@@ -155,6 +172,11 @@ public class RunService
 
             return list_runid;
         }
+        catch (CustomException)
+        {
+            await trx.RollbackAsync(cancellationToken);
+            throw;
+        }
         catch (InvalidOperationException ex)
         {
             await trx.RollbackAsync(cancellationToken);
@@ -173,133 +195,168 @@ public class RunService
         }
     }
 
-    public async Task<List<long>> IntegrateRunsheets(ParamIntegrateRunsheets param, CancellationToken cancellationToken)
+    public async Task<IntegrateRunsheetsResult> IntegrateRunsheets(ParamIntegrateRunsheets param, CancellationToken cancellationToken)
     {
+        if (param.data is null || param.data.Count == 0)
+            throw new CustomException("Tidak ada data kendaraan untuk diintegrasikan.", StatusCodes.Status422UnprocessableEntity);
+
+        var company_id = _userIdentity.GetCompanyId();
+        var user_id = _userIdentity.GetUserId();
+        var current_datetime = DateTime.Now;
+        var token_h2h = await _userIdentity.GetTokenH2H(cancellationToken);
+
+        var list_runid = param.data.Select(x => x.RunId).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct().ToList();
+        foreach (var runid in list_runid)
+            await _integrateGuard.EnsureReadyAsync(runid, cancellationToken);
+
+        if (company_id == CompanyIds.Advantage)
+        {
+            foreach (var runid in list_runid)
+                await _advantageCallback.EnsureSentAsync(runid, company_id, cancellationToken);
+        }
+
         using var conn = _vrp.CreateConnection();
         if (conn.State == ConnectionState.Closed) await conn.OpenAsync(cancellationToken);
-        using var trx = await conn.BeginTransactionAsync(cancellationToken);
 
         using var conn_gpsb = await _gpsb.CreateConnection();
         if (conn_gpsb.State == ConnectionState.Closed) await conn_gpsb.OpenAsync(cancellationToken);
-        using var trx_gpsb = await conn_gpsb.BeginTransactionAsync(cancellationToken);
 
         try
         {
-            var company_id = _userIdentity.GetCompanyId();
-            var user_id = _userIdentity.GetUserId();
-            var current_datetime = DateTime.Now;
-            var token_h2h = await _userIdentity.GetTokenH2H(cancellationToken);
-
-            var list_do_id = new List<long>();
-
-            foreach (var run in param.data)
+            foreach (var runid in list_runid)
             {
-
-                // ** cek apakah dari run dan car sudah ke-route
-                var sql = @"SELECT TOP 1 RunID FROM api_trx_route WITH(NOLOCK)
-                            WHERE runid = @runid AND carid = @carid AND UsrUpd = @user_id";
-                var cmd_check = new CommandDefinition(sql, new { runid = run.RunId, carid = run.CarId, user_id }, commandType: CommandType.Text, transaction: trx, cancellationToken: cancellationToken);
-                var validate_route = await conn.QueryFirstOrDefaultAsync<string>(cmd_check);
-
-                if (string.IsNullOrEmpty(validate_route)) throw new CustomException("Route mobil tidak ditemukan.", StatusCodes.Status404NotFound);
-
-                // ** cek apakah route sudah terintegrasi
-                sql = @"SELECT TOP 1 RunID FROM api_trx_route WITH(NOLOCK)
-                        WHERE runid = @runid AND carid = @carid AND UsrUpd = @user_id AND ISNULL(IsPostDO, 0) = 1";
-                var cmd_check2 = new CommandDefinition(sql, new { runid = run.RunId, carid = run.CarId, user_id }, commandType: CommandType.Text, transaction: trx, cancellationToken: cancellationToken);
-                var validate_route2 = await conn.QueryFirstOrDefaultAsync<string>(cmd_check2);
-
-                if (!string.IsNullOrEmpty(validate_route2)) throw new CustomException("Route mobil sudah pernah diintegrasikan ke TMS EasyGo.", StatusCodes.Status422UnprocessableEntity);
-
-                // ** preparasi integrasi data yang dibutuhkan untuk tms easygo
-                await PrerunIntegration
-                (
-                    company_id: company_id,
-                    runid: run.RunId,
-                    current_datetime: current_datetime,
-                    conn_vrp: conn,
-                    trx_vrp: trx,
-                    conn_gpsb: conn_gpsb,
-                    trx_gpsb: trx_gpsb,
-                    cancellationToken: cancellationToken
-                );
-
-                // ** create post do payload
-                var fetch_pool = GetPool(run.RunId, conn, trx, cancellationToken);
-                var fetch_trips = GetTrips(run.RunId, conn, trx, cancellationToken);
-                var fetch_vehicle = _gpsb_service.FindGPSBVehicleByGpsSn(company_id, run.CarId, cancellationToken);
-
-                await Task.WhenAll([fetch_pool, fetch_vehicle]);
-
-                var order_date = fetch_pool.Result.StartTime;
-                var car_plate = fetch_vehicle.Result.car_plate;
-                var driver_id = fetch_vehicle.Result.driver_id;
-                var geo_asal_code = fetch_pool.Result.PoolID;
-                var trips = fetch_trips.Result;
-
-                // ** hit vtsapi untuk create do
-                var do_payload = new
+                await using var trx_prerun = await conn.BeginTransactionAsync(cancellationToken);
+                await using var trx_gpsb_prerun = await conn_gpsb.BeginTransactionAsync(cancellationToken);
+                try
                 {
-                    do_id = 0,
-                    tgl_do = order_date.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture),
-                    car_plate,
-                    allow_multiple_do = 1,
-                    no_do = $"{run.RunId}-{DateTime.Now:yyyyMMddHHmmss}",
-                    note = "Auto posting from route plan.",
-                    opsi_complete = 4,
-                    driver_id,
-                    geo_asal = new List<object>() { new { code = geo_asal_code } },
-                    geo_tujuan = trips.Select(x => new
-                    {
-                        code = x.TripId,
-                        no_sj = x.TrxID
-                    })
-                };
-
-                var do_id = await _integrate_service.AddOrUpdateDOV1ByGeoCode(token_h2h, do_payload, cancellationToken);
-
-                // ** update route to IsPostDo = 1
-                sql = @"UPDATE api_trx_route SET IsPostDO = 1
-                        WHERE RunId = @runid AND CarID = @carid";
-                await conn.ExecuteAsync(new CommandDefinition
-                (
-                    sql, new { runid = run.RunId, carid = run.CarId }, transaction: trx, cancellationToken: cancellationToken
-                ));
-
-                list_do_id.Add(do_id);
+                    await PrerunIntegration
+                    (
+                        company_id: company_id,
+                        runid: runid,
+                        current_datetime: current_datetime,
+                        conn_vrp: conn,
+                        trx_vrp: trx_prerun,
+                        conn_gpsb: conn_gpsb,
+                        trx_gpsb: trx_gpsb_prerun,
+                        cancellationToken: cancellationToken
+                    );
+                    await trx_prerun.CommitAsync(cancellationToken);
+                    await trx_gpsb_prerun.CommitAsync(cancellationToken);
+                }
+                catch
+                {
+                    await trx_prerun.RollbackAsync(cancellationToken);
+                    await trx_gpsb_prerun.RollbackAsync(cancellationToken);
+                    throw;
+                }
             }
 
-            // **commit trx
-            await trx.CommitAsync(cancellationToken);
-            await trx_gpsb.CommitAsync(cancellationToken);
-            return [.. list_do_id.Where(x => x > 0)];
-        }
-        catch (InvalidOperationException)
-        {
-            await trx.RollbackAsync(cancellationToken);
-            await trx_gpsb.RollbackAsync(cancellationToken);
-            throw;
-        }
-        catch (CreateRunsheetException)
-        {
-            await trx.RollbackAsync(cancellationToken);
-            await trx_gpsb.RollbackAsync(cancellationToken);
-            throw;
-        }
-        catch (Exception)
-        {
-            await trx.RollbackAsync(cancellationToken);
-            await trx_gpsb.RollbackAsync(cancellationToken);
-            throw;
+            var result = new IntegrateRunsheetsResult();
+            foreach (var run in param.data)
+            {
+                await using var trx = await conn.BeginTransactionAsync(cancellationToken);
+                try
+                {
+                    var do_id = await IntegrateVehicleAsync(
+                        company_id,
+                        user_id,
+                        token_h2h,
+                        run,
+                        conn,
+                        trx,
+                        cancellationToken);
+                    await trx.CommitAsync(cancellationToken);
+                    if (do_id > 0) result.DoIds.Add(do_id);
+                    result.SuccessCarIds.Add(run.CarId);
+                }
+                catch (Exception ex)
+                {
+                    try { await trx.RollbackAsync(cancellationToken); }
+                    catch (Exception rollbackEx)
+                    {
+                        _logger.LogWarning(rollbackEx, "Rollback failed after integrating {RunId} / {CarId}", run.RunId, run.CarId);
+                    }
+
+                    _logger.LogWarning(ex, "Failed integrating {RunId} / {CarId}", run.RunId, run.CarId);
+                    result.Errors.Add(new IntegrateCarErrorItem
+                    {
+                        CarId = run.CarId,
+                        Message = string.IsNullOrWhiteSpace(ex.Message) ? "Internal server error" : ex.Message
+                    });
+                }
+            }
+
+            return result;
         }
         finally
         {
-            await trx.DisposeAsync();
-            await trx_gpsb.DisposeAsync();
-
             if (conn.State == ConnectionState.Open) await conn.CloseAsync();
             if (conn_gpsb.State == ConnectionState.Open) await conn_gpsb.CloseAsync();
         }
+    }
+
+    private async Task<long> IntegrateVehicleAsync
+    (
+        int company_id,
+        string user_id,
+        string token_h2h,
+        ParamTrxRoute run,
+        DbConnection conn,
+        DbTransaction trx,
+        CancellationToken cancellationToken
+    )
+    {
+        var sql = @"SELECT TOP 1 RunID FROM api_trx_route WITH(NOLOCK)
+                    WHERE runid = @runid AND carid = @carid AND UsrUpd = @user_id";
+        var validate_route = await conn.QueryFirstOrDefaultAsync<string>(new CommandDefinition(
+            sql, new { runid = run.RunId, carid = run.CarId, user_id }, transaction: trx, cancellationToken: cancellationToken));
+
+        if (string.IsNullOrEmpty(validate_route))
+            throw new CustomException("Route mobil tidak ditemukan.", StatusCodes.Status404NotFound);
+
+        sql = @"SELECT TOP 1 RunID FROM api_trx_route WITH(NOLOCK)
+                WHERE runid = @runid AND carid = @carid AND UsrUpd = @user_id AND ISNULL(IsPostDO, 0) = 1";
+        var validate_route2 = await conn.QueryFirstOrDefaultAsync<string>(new CommandDefinition(
+            sql, new { runid = run.RunId, carid = run.CarId, user_id }, transaction: trx, cancellationToken: cancellationToken));
+
+        if (!string.IsNullOrEmpty(validate_route2))
+            throw new CustomException("Route mobil sudah pernah diintegrasikan ke TMS EasyGo.", StatusCodes.Status422UnprocessableEntity);
+
+        var fetch_pool = GetPool(run.RunId, conn, trx, cancellationToken);
+        var fetch_trips = GetTrips(run.RunId, conn, trx, cancellationToken);
+        var fetch_vehicle = _gpsb_service.FindGPSBVehicleByGpsSn(company_id, run.CarId, cancellationToken);
+        await Task.WhenAll(fetch_pool, fetch_trips, fetch_vehicle);
+
+        var pool = fetch_pool.Result;
+        var trips = fetch_trips.Result;
+        var vehicle = fetch_vehicle.Result;
+
+        var do_payload = new
+        {
+            do_id = 0,
+            tgl_do = pool.StartTime.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture),
+            car_plate = vehicle.car_plate,
+            allow_multiple_do = 1,
+            no_do = $"{run.RunId}-{run.CarId}-{DateTime.Now:yyyyMMddHHmmss}",
+            note = "Auto posting from route plan.",
+            opsi_complete = 4,
+            driver_id = vehicle.driver_id,
+            geo_asal = new List<object> { new { code = pool.PoolID } },
+            geo_tujuan = trips.Select(x => new
+            {
+                code = x.TripId,
+                no_sj = x.TrxID
+            })
+        };
+
+        var do_id = await _integrate_service.AddOrUpdateDOV1ByGeoCode(token_h2h, do_payload, cancellationToken);
+
+        sql = @"UPDATE api_trx_route SET IsPostDO = 1
+                WHERE RunId = @runid AND CarID = @carid";
+        await conn.ExecuteAsync(new CommandDefinition(
+            sql, new { runid = run.RunId, carid = run.CarId }, transaction: trx, cancellationToken: cancellationToken));
+
+        return do_id;
     }
 
     private async Task PrerunIntegration
@@ -315,8 +372,15 @@ public class RunService
     )
     {
         // ** prepare master client dengan gpsb
-        // select dari api_mst_trip
-        var sql = @"SELECT CodeCustomer AS code, TripName AS name, TripAddress AS address 
+        // select dari api_mst_trip; CodeCustomer kosong fallback ke LayananID
+        var sql = @"SELECT
+                        CASE
+                            WHEN NULLIF(LTRIM(RTRIM(ISNULL(CodeCustomer, ''))), '') IS NOT NULL
+                                THEN LTRIM(RTRIM(CodeCustomer))
+                            ELSE LTRIM(RTRIM(LayananID))
+                        END AS code,
+                        TripName AS name,
+                        TripAddress AS address
                     FROM api_mst_trip WITH(NOLOCK)
                     WHERE runid = @runid";
         var vrp_client = await conn_vrp.QueryAsync<Client>(new CommandDefinition
@@ -330,10 +394,13 @@ public class RunService
         // select dari gpsb
         var gpsb_client = await _gpsb_service.GetGPSBClients(company_id, cancellationToken);
         // map client yang tidak ada di gpsb
-        var not_in_gpsb_client = vrp_client.Where(x =>
-                                    !gpsb_client.Select(y =>
-                                        y.code.Trim().ToLower()
-                                    ).Contains(x.code.Trim().ToLower())).GroupBy(x => x.code);
+        var not_in_gpsb_client = vrp_client
+            .Where(x => !string.IsNullOrWhiteSpace(x.code))
+            .Where(x =>
+                !gpsb_client.Select(y =>
+                    y.code.Trim().ToLower()
+                ).Contains(x.code.Trim().ToLower()))
+            .GroupBy(x => x.code);
         // insert client
         foreach (var client in not_in_gpsb_client)
         {
@@ -366,13 +433,13 @@ public class RunService
             new(){code = pool.PoolID, name = pool.PoolName, address = string.Empty, lon = Convert.ToDouble(pool.StartLong), lat = Convert.ToDouble(pool.StartLat)},
         };
         // append trips sebagai geofence
-        vrp_geofence.AddRange(trips.Select(x => new GeofenceArea
+        vrp_geofence.AddRange(trips.GroupBy(x => new {x.TripId, x.TripName, x.TripLong, x.TripLat}).Select(x => new GeofenceArea
         {
-            code = x.TripId,
-            name = x.TripName,
+            code = x.Key.TripId,
+            name = x.Key.TripName,
             address = string.Empty,
-            lon = Convert.ToDouble(x.TripLong),
-            lat = Convert.ToDouble(x.TripLat)
+            lon = Convert.ToDouble(x.Key.TripLong),
+            lat = Convert.ToDouble(x.Key.TripLat)
         }));
 
         // select dari gpsb
@@ -403,7 +470,7 @@ public class RunService
         var order_date = pool.StartTime;
 
         // ambil parameter untuk order dari api_mst_trip
-        sql = @"SELECT TripId, CodeCustomer, Capacity, Balance, TrxID
+        sql = @"SELECT TripId, CodeCustomer, LayananID, Capacity, Balance, TrxID
                 FROM api_mst_trip WITH(NOLOCK)
                 WHERE RunID = @runid";
         var get_trip_for_payload = await conn_vrp.QueryAsync<ApiMstTrip>(new CommandDefinition
@@ -417,7 +484,11 @@ public class RunService
         // generate payload
         var order_payload = get_trip_for_payload.Select(x =>
         {
-            var client_id = clients.FirstOrDefault(y => y.code.Trim().ToLower() == x.CodeCustomer.Trim().ToLower())?.client_id ?? throw new CustomException($"Client dengan CodeCustomer: {x.CodeCustomer} tidak dapat ditemukan. (TripID: {x.TripId})", StatusCodes.Status404NotFound);
+            var client_code = ResolveGpsbClientCode(x.CodeCustomer, x.LayananID);
+            if (string.IsNullOrWhiteSpace(client_code))
+                throw new CustomException($"CodeCustomer dan LayananID kosong. (TripID: {x.TripId})", StatusCodes.Status422UnprocessableEntity);
+
+            var client_id = clients.FirstOrDefault(y => y.code.Trim().ToLower() == client_code.ToLower())?.client_id ?? throw new CustomException($"Client dengan CodeCustomer: {client_code} tidak dapat ditemukan. (TripID: {x.TripId})", StatusCodes.Status404NotFound);
 
             var geo_id = geofences.FirstOrDefault(y => y.code.Trim().ToLower() == x.TripId.Trim().ToLower())?.id ?? throw new CustomException($"Geofence dengan code: {x.TripId} tidak dapat ditemukan. (TripID: {x.TripId})", StatusCodes.Status404NotFound);
 
@@ -550,6 +621,15 @@ public class RunService
         ));
 
         return [.. trxdetaildata];
+    }
+
+    private static string ResolveGpsbClientCode(string? codeCustomer, string? layananId)
+    {
+        if (!string.IsNullOrWhiteSpace(codeCustomer))
+            return codeCustomer.Trim();
+        if (!string.IsNullOrWhiteSpace(layananId))
+            return layananId.Trim();
+        return string.Empty;
     }
 
     private static bool IsValidLongLat(string input)

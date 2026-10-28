@@ -171,17 +171,14 @@ namespace RoutePlanner_Api.Controllers
         {
             try
             {
-                // ** hit post do
-                var list_do_id = await _runService.IntegrateRunsheets(param, cancellationToken);
-
-                return StatusCode((int)HttpStatusCode.Created, new
-                {
-                    message = "Runsheets berhasil diintegrasikan ke TMS EasyGO.",
-                    data = list_do_id.Select(x => new
-                    {
-                        do_id = x
-                    })
-                });
+                var result = await _runService.IntegrateRunsheets(param, cancellationToken);
+                var (status, body) = result.ToHttpResponse();
+                return StatusCode(status, body);
+            }
+            catch (CustomException ex)
+            {
+                _logger.LogWarning(ex, "Failed when integrating prambanan runsheets.");
+                return StatusCode(ex.status_code, new { message = ex.Message });
             }
             catch (InvalidOperationException ex)
             {

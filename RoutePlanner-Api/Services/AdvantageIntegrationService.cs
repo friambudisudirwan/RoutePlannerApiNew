@@ -1,4 +1,3 @@
-using System;
 using System.Security.Cryptography;
 using System.Text;
 using Newtonsoft.Json;
@@ -11,11 +10,13 @@ namespace RoutePlanner_Api.Services;
 
 public sealed class AdvantageIntegrationService
 (
-    IConfiguration config
+    IConfiguration config,
+    ILogger<AdvantageIntegrationService> logger
 )
 {
+    private readonly ILogger<AdvantageIntegrationService> _logger = logger;
     private readonly string _baseUrl = config.GetSection("AdvantageSCMIntegrationConfig")["BaseUrl"] ?? throw new InvalidOperationException("AdvantageSCMIntegrationConfig BaseUrl not found");
-    private readonly string _endpoint = config.GetSection("AdvantageSCMIntegrationConfig")["Endpoint"] ?? throw new InvalidOperationException("AdvantageSCMIntegrationConfig Endpoint not found");
+    private readonly string _endpoint = NormalizeEndpoint(config.GetSection("AdvantageSCMIntegrationConfig")["Endpoint"] ?? throw new InvalidOperationException("AdvantageSCMIntegrationConfig Endpoint not found"));
     private readonly string _api_key = config.GetSection("AdvantageSCMIntegrationConfig")["ApiKey"] ?? throw new InvalidOperationException("AdvantageSCMIntegrationConfig ApiKey not found");
     private readonly string _private_key = ResolvePrivateKey(config);
 
@@ -26,36 +27,49 @@ public sealed class AdvantageIntegrationService
         DefaultValueHandling = DefaultValueHandling.Include
     };
 
-    public async Task<object> SendUpdateAsync(ParamAdvantageIntegration payload, CancellationToken cancellationToken)
+    public async Task<(int httpStatus, string message)> SendUpdateAsync(ParamAdvantageIntegration payload, CancellationToken cancellationToken)
     {
         var json_body = JsonConvert.SerializeObject(payload, JsonSettings);
         var timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString();
         var signature = Sign(_private_key, timestamp, "PUT", _endpoint, json_body);
 
         var client = new RestClient(_baseUrl);
-        var request = new RestRequest(json_body, Method.Put);
+        var request = new RestRequest(_endpoint, Method.Put);
         request.AddStringBody(json_body, ContentType.Json);
         request.AddHeader("X-API-Key", _api_key);
         request.AddHeader("X-Signature", signature);
         request.AddHeader("X-Timestamp", timestamp);
+        request.AddHeader("Content-Type", "application/json");
 
         var response = await client.ExecuteAsync(request, cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
-            if (response.Content.TryParseJson(out ResponseAdvantageIntegrationError content))
+            var status = (int)response.StatusCode;
+            if ((response.Content ?? "").TryParseJson(out ResponseAdvantageIntegrationError content)
+                && !string.IsNullOrWhiteSpace(content.message))
             {
-                throw new CustomException(content.message, (int)response.StatusCode);
+                _logger.LogWarning("Advantage callback failed ({Status}): {Message}", status, content.message);
+                throw new CustomException(content.message, status == 0 ? StatusCodes.Status500InternalServerError : status);
             }
-            throw new CustomException("Advantage SCM Integration Failed. Internal server error", StatusCodes.Status500InternalServerError);
+
+            _logger.LogError("Advantage callback failed ({Status}): {Content}", status, response.Content);
+            throw new CustomException(
+                response.ErrorMessage ?? "Advantage SCM Integration Failed. Internal server error",
+                status == 0 ? StatusCodes.Status500InternalServerError : status);
         }
 
-        if (response.Content.TryParseJson(out ResponseAdvantageIntegration res))
+        var message = "Success";
+        if ((response.Content ?? "").TryParseJson(out ResponseAdvantageIntegration res)
+            && !string.IsNullOrWhiteSpace(res.data?.message))
         {
-
+            message = res.data.message;
         }
 
-        return new { };
+        return ((int)response.StatusCode, message);
     }
+
+    private static string NormalizeEndpoint(string endpoint)
+        => endpoint.StartsWith('/') ? endpoint : $"/{endpoint}";
 
     private static string ResolvePrivateKey(IConfiguration config)
     {

@@ -1,10 +1,12 @@
-using System;
-
 namespace RoutePlanner_Api.Dtos;
 
 public class ResponseAdvantageIntegration
 {
-    public int StatusCode { get; set; }
-    public string? Body { get; set; }
-    public bool isSuccess { get; set; }
+    public ResponseAdvantageIntegrationBody? data { get; set; }
+}
+
+public class ResponseAdvantageIntegrationBody
+{
+    public int statusCode { get; set; }
+    public string? message { get; set; }
 }

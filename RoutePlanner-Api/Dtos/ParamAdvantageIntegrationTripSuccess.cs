@@ -1,5 +1,3 @@
-using System;
-
 namespace RoutePlanner_Api.Dtos;
 
 public class ParamAdvantageIntegrationTripSuccess
@@ -8,7 +6,7 @@ public class ParamAdvantageIntegrationTripSuccess
     public int routeNo { get; set; }
     public string? carID { get; set; }
     public string? policeNo { get; set; }
-    public int capacityStart { get; set; }
+    public double capacityStart { get; set; }
     public int workingTimeStart { get; set; }
     public string? startTrxID { get; set; }
     public string? startID { get; set; }
@@ -33,16 +31,16 @@ public class ParamAdvantageIntegrationTripSuccess
     public int timeOperation { get; set; }
     public int timeRest { get; set; }
     public string? endTime { get; set; }
-    public int workingTimeEnd{ get; set; }
-    public double capacityUse{ get; set; }
-    public double capacityEnd{ get; set; }
-    public double distanace{ get; set; }
-    public double balance{ get; set; }
-    public string? layananID{ get; set; }
-    public string? tripType{ get; set; }
-    public string? metodeHitung{ get; set; }
-    public string? siklus{ get; set; }
-    public string? trxID{ get; set; }
-    public string? zoneCode{ get; set; }
-    public string? regionCode{ get; set; }
+    public int workingTimeEnd { get; set; }
+    public double capacityUse { get; set; }
+    public double capacityEnd { get; set; }
+    public double distance { get; set; }
+    public double balance { get; set; }
+    public string? layananID { get; set; }
+    public string? tripType { get; set; }
+    public string? metodeHitung { get; set; }
+    public string? siklus { get; set; }
+    public string? trxID { get; set; }
+    public string? zoneCode { get; set; }
+    public string? regionCode { get; set; }
 }

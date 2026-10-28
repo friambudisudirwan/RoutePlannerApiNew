@@ -1,0 +1,233 @@
+package main
+
+import (
+	"bytes"
+	"crypto"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/base64"
+	"encoding/json"
+	"encoding/pem"
+	"fmt"
+	"io"
+	"net/http"
+	"strconv"
+	"time"
+)
+
+// Example usage of the scrapper authentication
+func main() {
+	// Your private key (in real implementation, store this securely)
+	privateKeyPEM := `-----BEGIN RSA PRIVATE KEY-----
+MIIEogIBAAKCAQEA90tGU5zEgCIIw7P9lLTBFO2CqF3DMKTGlNobwRjCgzBW4iaG
+pYUCWQQi0vu53vor4Hq2ByDfFKjxj2IBxqMYn/kWP47EVil6B3WLkljlk1mUJCnq
+wq/JkgQ3tdHKVqG+Wl4ERLyWuPfOBWbg0YyXa5LkmJHsS6gRNWDKcgdUMlMY766h
+us9LBaJcDwz2aP8dIwPIQ+L9/ZgtcTys+btRsP8w/TgYTdNE9T/OCLendr3Eam5E
+jMv3m3XdofYb+GHTt1UZRw5bWpMSXLwf0g+hZ8K42eOonEDERCRARA1NAfFcSWjn
+qRh85qv4u9cY2qT360hcpW7UHw0wiT/HtJ0WowIDAQABAoIBACI9R+V3xTVAgRon
+p6qZREqTgA2zvbzUc7JUaJdZyETFwqHZV7c/LU4J5pBzzg5zcPPJyb4+7OQ9aATE
+Ox63okc0A8KVD9YmNAEoY0TGDjNSqdJAA4MlN7GB5/zCqVNJXcPBVLH3sp61oM7a
+qbIZ1zVLx17ghWkMQiWz2xPis+OrnBEVr5w3VuYshziRbbZjW5870mhSuDdL3JbT
+uj6y0aUmAG8cg+WRoCbDlOCiUfDxODkAMJD6dJ+5gsCWS1x5ZHPPdSMfl7SeKXwK
+a+RR/yEpLxmaJqR6jJDwxIg+sTlGyRwx6xZ2ly6Zy29t1rFRxozUPuLkoxby3Lho
+hdIm/eECgYEA+dxkvehSztOWEpqq9sOCFnJZJvZsZbtgiZ9DupBMJME5bjGnf5IL
+Yb4LPi6dmw5CwoCg/IK0RXwyc/pguxRz4otzR08EVdsO91KW51h0/saxP686Hrk2
+Pk4Qa41s4F2L8UwXndWkRBn0E9H/d8J9aYOchtrgji9z8XYhQus1thkCgYEA/V68
+W0bOxxXLladfZSj8GEcq5OVFYIKnBqhD9jyaVLeVTb0Jbi/N0fBJZJFkg19rdS7p
+KuQlaxP5e4nf3GIEmUipT+SbvmWQdbV0Rhvipia66PqNi4Fkb2fZVUb7ypcxRTas
+NY8FBK+TVG5ZO+RJajgyBY0Q5b46Z8cUaYOyMhsCgYAtrIgN3wYkILFyPSu7aAnD
+qKt7X9h40EPZZG+xDuecYGXrKtB/lWbXOzI677KHwZeajoDfJ9VkTku6v64nBJoa
+c3tjMaKNPzoBI+vJ5nWcjR2hkpqBO0IbKZH+1x9r9C28sjgu9frNKCFh7iVQ8xCR
+1SkrzZ723t3G6d0yqmRrIQKBgEfyiOYae0lJRSBgANTHCJ8URnftKwA22ZsoWPQp
+TWHVJ86FaZIifP2qkAzAxJwRkoAaLBgD5SQ87dFI24rHQqsMWRfYwOkWCimCt1vZ
+O0kXImhaDauZuJ1yDeMLXyCuQk13Mvuae0BTYzDMjQZW0woYnwu4fR3gINGrVH6J
+6SYVAoGAM1lmWYOMVPsUPi/xQBaOUnX8HETGoVe6R7RlJwgoACGuFiEGOq/4sjyw
+1pkZ6/qo+dlfzYugK38R1ENbypaA9jpQNb46Fa71xS8AaPOuBcERE0izitEr878H
+soJg9exJjg/OvFd+CjgHdYgGtPkMPdK1aA50t1D8rLVL7cNXHLA=
+-----END RSA PRIVATE KEY-----`
+
+	// Your API key (this should be stored in the scrapper_auth table)
+	apiKey := "SCRAPPER_5e040166eeff611c7e9549bf3ce5b473"
+
+	// Sample payload for single record
+	payload := map[string]interface{}{
+		"statusCode": 200,
+		"message":    "string",
+		"data": map[string]interface{}{
+			"pool": map[string]interface{}{
+				"runID":        "string",
+				"poolID":       "string",
+				"poolName":     "string",
+				"startTime":    "string",
+				"long":         "string",
+				"lat":          "string",
+				"maxTimeIdle":  0,
+				"description":  "string",
+				"totalRouted":  0,
+				"totalUnrouted": 0,
+			},
+			"success": []interface{}{
+				map[string]interface{}{
+					"runID":              "string",
+					"routeNo":            0,
+					"carID":              "string",
+					"policeNo":           "string",
+					"capacityStart":      0,
+					"workingTimeStart":   0,
+					"startTrxID":         "string",
+					"startID":            "string",
+					"startName":          "string",
+					"startLong":          "string",
+					"startLat":           "string",
+					"endTrxID":           "string",
+					"endSeq":             0,
+					"endID":              "string",
+					"endName":            "string",
+					"endLong":            "string",
+					"endLat":             "string",
+					"timeOpen":           "string",
+					"timeClose":          "string",
+					"maxTimeIdle":        0,
+					"startTime":          "string",
+					"duration":           0,
+					"arrivalTime":        "string",
+					"idleTime":           0,
+					"timeWait":           0,
+					"startOperationTime": "string",
+					"timeOperation":      0,
+					"timeRest":           0,
+					"endTime":            "string",
+					"workingTimeEnd":     0,
+					"capacityUse":        0,
+					"capacityEnd":        0,
+					"distance":           0,
+					"balance":            0,
+					"layananID":          "string",
+					"tripType":           "string",
+					"metodeHitung":       "string",
+					"siklus":             "string",
+					"trxID":              "string",
+					"zoneCode":           "string",
+					"regionCode":         "string",
+				},
+			},
+			"unsuccess": []interface{}{
+				map[string]interface{}{
+					"tripID":        "string",
+					"tripName":      "string",
+					"tripLong":      "string",
+					"tripLat":       "string",
+					"timeOpen":      "string",
+					"timeClose":     "string",
+					"timeWait":      0,
+					"timeOperation": 0,
+					"capacity":      0,
+					"balance":       0,
+					"layananID":     "string",
+					"parentID":      "string",
+					"isDv":          0,
+					"usrUpd":        "string",
+					"tripType":      "string",
+					"metodeHitung":  "string",
+					"siklus":        "string",
+					"trxID":         "string",
+					"zoneCode":      "string",
+					"regionCode":    "string",
+				},
+			},
+		},
+	}
+
+	// Choose payload type (change this to test different endpoints)
+	var selectedPayload interface{}
+	var endpoint string
+	
+	// For single record
+	selectedPayload = payload
+	endpoint = "/api/v2/easygo-update"
+	
+
+	// Convert payload to JSON
+	jsonPayload, err := json.Marshal(selectedPayload)
+	if err != nil {
+		fmt.Printf("Error marshaling payload: %v\n", err)
+		return
+	}
+
+	// Create timestamp
+	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
+
+	// Create message to sign: timestamp + method + path + body
+	message := timestamp + "PUT" + endpoint + string(jsonPayload)
+
+	// Sign the message
+	signature, err := signMessage(privateKeyPEM, message)
+	if err != nil {
+		fmt.Printf("Error signing message: %v\n", err)
+		return
+	}
+
+	// Create HTTP request
+	url := "https://sandbox-apd.advantagescm.com" + endpoint
+	req, err := http.NewRequest("PUT", url, bytes.NewBuffer(jsonPayload))
+	if err != nil {
+		fmt.Printf("Error creating request: %v\n", err)
+		return
+	}
+
+	// Add headers
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-API-Key", apiKey)
+	req.Header.Set("X-Signature", signature)
+	req.Header.Set("X-Timestamp", timestamp)
+
+	// Send request
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		fmt.Printf("Error sending request: %v\n", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	// Read response
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		fmt.Printf("Error reading response: %v\n", err)
+		return
+	}
+
+	fmt.Printf("Status: %d\n", resp.StatusCode)
+	fmt.Printf("Response: %s\n", responseBody)
+
+	fmt.Println(req.Header)
+}
+
+func signMessage(privateKeyPEM, message string) (string, error) {
+	// Parse the private key
+	block, _ := pem.Decode([]byte(privateKeyPEM))
+	if block == nil {
+		return "", fmt.Errorf("failed to parse PEM block containing the key")
+	}
+
+	privateKey, err := x509.ParsePKCS1PrivateKey(block.Bytes)
+	if err != nil {
+		return "", err
+	}
+
+	// Hash the message
+	hasher := sha256.New()
+	hasher.Write([]byte(message))
+	hashedMessage := hasher.Sum(nil)
+
+	// Sign the hash
+	signature, err := rsa.SignPKCS1v15(rand.Reader, privateKey, crypto.SHA256, hashedMessage)
+	if err != nil {
+		return "", err
+	}
+
+	// Encode to base64
+	return base64.StdEncoding.EncodeToString(signature), nil
+}

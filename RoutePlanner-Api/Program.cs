@@ -58,6 +58,8 @@ builder.Services.AddScoped<PrambananRunService>();
 builder.Services.AddScoped<IntegrateService>();
 
 builder.Services.AddScoped<AdvantageIntegrationService>(); // khusus untuk advantage
+builder.Services.AddScoped<AdvantageCallbackService>();
+builder.Services.AddScoped<RunsheetIntegrateGuard>();
 builder.Services.AddScoped<RunService>();
 
 builder.Services.AddHostedService(provider =>
